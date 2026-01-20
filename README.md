@@ -1,3 +1,6 @@
+# Project Development
+The following repo was used as the starting point for the development of the project for Underactuated Robots course.
+
 # Description
 This is IS-MPC, a framework for humanoid gait generation.
 
