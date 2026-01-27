@@ -14,6 +14,14 @@ class Ismpc:
     self.footstep_planner = footstep_planner
     self.sigma = lambda t, t0, t1: np.clip((t - t0) / (t1 - t0), 0, 1) # piecewise linear sigmoidal function
 
+    # nuove variabili
+    self.k_1 = params['k_1']
+    self.k_2 = params['k_2']
+    self.alpha = params['alpha']
+    self.beta = params['beta']
+    self.eta = params['eta']
+
+
     # lip model matrices
     self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]])
     self.B_lip = np.array([[0], [0], [1]])
@@ -90,10 +98,29 @@ class Ismpc:
     self.x = sol.value(self.X[:,1])
     self.u = sol.value(self.U[:,0])
 
+    p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD
+
+    xi_ref = self.compute_cp(
+        self.x[[0, 3, 6]],   # COM pos predetta MPC
+        self.x[[1, 4, 7]]    # COM vel predetta MPC
+    ) # FEEDBACK
+
+    p_meas  = current['zmp']['pos']
+    xi_meas = self.compute_cp(
+        current['com']['pos'],
+        current['com']['vel']
+    ) # FEEDBACK
+
+    p_cmd = (
+        p_ref
+        - self.k_1 * (xi_meas - xi_ref)
+        - self.k_2 * (p_meas  - p_ref)
+    )
+
     self.opt.set_initial(self.U, sol.value(self.U))
     self.opt.set_initial(self.X, sol.value(self.X))
 
-    # create output LIP state
+    # create output LIP state da MPC
     self.lip_state['com']['pos'] = np.array([self.x[0], self.x[3], self.x[6]])
     self.lip_state['com']['vel'] = np.array([self.x[1], self.x[4], self.x[7]])
     self.lip_state['zmp']['pos'] = np.array([self.x[2], self.x[5], self.x[8]])
@@ -104,7 +131,7 @@ class Ismpc:
     if contact == 'ss':
       contact = self.footstep_planner.plan[self.footstep_planner.get_step_index_at_time(t)]['foot_id']
 
-    return self.lip_state, contact
+    return self.lip_state, contact, p_cmd
   
   def generate_moving_constraint(self, t):
     mc_x = np.full(self.N, (self.initial['lfoot']['pos'][3] + self.initial['rfoot']['pos'][3]) / 2.)
@@ -120,3 +147,24 @@ class Ismpc:
       mc_y += self.sigma(time_array, ds_start_time, fs_end_time) * (fs_target_pos[1] - fs_current_pos[1])
 
     return mc_x, mc_y, np.zeros(self.N)
+  
+  def compute_cp(self, com_pos, com_vel):
+    return com_pos + com_vel / self.eta
+
+  def cp_zmp_balance_control(self, current, p_ref):
+      # CP misurato
+      xi = self.compute_cp(
+          current['com']['pos'],
+          current['com']['vel']
+      )
+
+      # CP di riferimento (coerente con ZMP MPC)
+      xi_ref = p_ref.copy()
+
+      # CP-ZMP feedback (Eq. 12)
+      dp = (
+          - self.k_1 * (xi - xi_ref)
+          - self.k_2 * (current['zmp']['pos'] - p_ref)
+      )
+
+      return dp

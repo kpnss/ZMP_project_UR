@@ -28,8 +28,22 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'µ': 0.5,
             'N': 100,
             'dof': self.hrp4.getNumDofs(),
+
+            # nuove variabili
+            'alpha': -4.0,             # guadagno su CP
+            'beta': -8.0,              # guadagno su ZMP
+            'g_p': 20.0,               # guadagno per il delay
         }
+        # frequenza naturale del modello LIP
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
+
+        # guadagni di feedback per CP/ZMP (paper)
+        self.params['k_1'] = -((self.params['alpha'] - self.params['eta']) *
+                            (self.params['beta'] - self.params['eta'])) / self.params['eta'] * self.params['g_p']
+
+        self.params['k_2'] = -((self.params['alpha'] + self.params['beta'] - self.params['eta'] + 
+                                self.params['g_p']) / self.params['g_p'])
+
 
         # robot links
         self.lsole = hrp4.getBodyNode('l_sole')
@@ -147,13 +161,15 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.current['zmp']['pos'][2] = x_flt[8]
 
         # get references using mpc
-        lip_state, contact = self.mpc.solve(self.current, self.time)
+        lip_state, contact, p_cmd = self.mpc.solve(self.current, self.time)
 
         self.desired['com']['pos'] = lip_state['com']['pos']
         self.desired['com']['vel'] = lip_state['com']['vel']
         self.desired['com']['acc'] = lip_state['com']['acc']
-        self.desired['zmp']['pos'] = lip_state['zmp']['pos']
-        self.desired['zmp']['vel'] = lip_state['zmp']['vel']
+        # ZMP Balance Control
+        self.desired['zmp']['pos'] = p_cmd
+        self.desired['zmp']['vel'] = (p_cmd - self.current['zmp']['pos']) / self.params['world_time_step']
+
 
         # get foot trajectories
         feet_trajectories = self.foot_trajectory_generator.generate_feet_trajectories_at_time(self.time)
