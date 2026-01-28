@@ -32,17 +32,18 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             # nuove variabili
             'alpha': -4.0,             # guadagno su CP
             'beta': -8.0,              # guadagno su ZMP
+            'gamma': -0.0,             # guadagno integrazione errore
             'g_p': 20.0,               # guadagno per il delay
         }
         # frequenza naturale del modello LIP
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
 
         # guadagni di feedback per CP/ZMP (paper)
-        self.params['k_1'] = -((self.params['alpha'] - self.params['eta']) *
-                            (self.params['beta'] - self.params['eta'])) / self.params['eta'] * self.params['g_p']
+        self.params['k_1'] = -((self.params['alpha'] * self.params['beta'] + self.params['beta'] * self.params['gamma'] + self.params['gamma'] * self.params['alpha']- self.params['eta'] * (self.params['alpha'] + self.params['beta'] + self.params['gamma'] - self.params['eta']))) / self.params['eta'] * self.params['g_p']
 
-        self.params['k_2'] = -((self.params['alpha'] + self.params['beta'] - self.params['eta'] + 
-                                self.params['g_p']) / self.params['g_p'])
+        self.params['k_2'] = -((self.params['alpha'] + self.params['beta'] - self.params['eta'] + self.params['g_p'] + self.params['gamma']) / self.params['g_p'])
+        
+        self.params['k_i'] = (self.params['alpha'] * self.params['beta'] * self.params['gamma'])/(self.params['eta'] * self.params['g_p'])
 
 
         # robot links
@@ -161,7 +162,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.current['zmp']['pos'][2] = x_flt[8]
 
         # get references using mpc
-        lip_state, contact, p_cmd = self.mpc.solve(self.current, self.time)
+        lip_state, contact, p_cmd, xi_error_int = self.mpc.solve(self.current, self.time)
 
         self.desired['com']['pos'] = lip_state['com']['pos']
         self.desired['com']['vel'] = lip_state['com']['vel']
@@ -169,6 +170,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         # ZMP Balance Control
         self.desired['zmp']['pos'] = p_cmd
         self.desired['zmp']['vel'] = (p_cmd - self.current['zmp']['pos']) / self.params['world_time_step']
+        self.xi_error_int = xi_error_int
 
 
         # get foot trajectories
@@ -233,6 +235,8 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         if force[2] <= 0.1: # threshold for when we lose contact
             zmp = np.array([0., 0., 0.]) # FIXME: this should return previous measurement
+            self.xi_error_int = np.zeros(3)
+            
         else:
             # sometimes we get contact points that dont make sense, so we clip the ZMP close to the robot
             midpoint = (l_foot_position + l_foot_position) / 2.

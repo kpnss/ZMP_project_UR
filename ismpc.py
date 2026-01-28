@@ -17,9 +17,11 @@ class Ismpc:
     # nuove variabili
     self.k_1 = params['k_1']
     self.k_2 = params['k_2']
+    self.k_i = params['k_i']
     self.alpha = params['alpha']
     self.beta = params['beta']
     self.eta = params['eta']
+    self.gamma = params['gamma']
 
 
     # lip model matrices
@@ -32,6 +34,8 @@ class Ismpc:
       self.A_lip @ x[3:6] + self.B_lip @ u[1],
       self.A_lip @ x[6:9] + self.B_lip @ u[2] + np.array([0, - params['g'], 0]),
     )
+    self.xi_error_int = np.zeros(3)
+
 
     # optimization problem
     self.opt = cs.Opti('conic')
@@ -95,26 +99,29 @@ class Ismpc:
     self.opt.set_value(self.zmp_z_mid_param, mc_z)
 
     sol = self.opt.solve()
-    self.x = sol.value(self.X[:,1])
+    # self.x = sol.value(self.X[:,1])
+    self.x = np.array([
+        current['com']['pos'][0], current['com']['vel'][0], current['zmp']['pos'][0],
+        current['com']['pos'][1], current['com']['vel'][1], current['zmp']['pos'][1],
+        current['com']['pos'][2], current['com']['vel'][2], current['zmp']['pos'][2]
+    ])
+
     self.u = sol.value(self.U[:,0])
 
     p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD
 
-    xi_ref = self.compute_cp(
-        self.x[[0, 3, 6]],   # COM pos predetta MPC
-        self.x[[1, 4, 7]]    # COM vel predetta MPC
-    ) # FEEDBACK
-
     p_meas  = current['zmp']['pos']
-    xi_meas = self.compute_cp(
-        current['com']['pos'],
-        current['com']['vel']
-    ) # FEEDBACK
+
+    dt = self.params['world_time_step']
+    xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
+    xi_ref  = self.compute_cp(self.x[[0, 3, 6]], self.x[[1, 4, 7]])
+    self.xi_error_int += (xi_meas - xi_ref) * dt
 
     p_cmd = (
         p_ref
         - self.k_1 * (xi_meas - xi_ref)
-        - self.k_2 * (p_meas  - p_ref)
+        - self.k_2 * (p_meas - p_ref)
+        - self.k_i * self.xi_error_int
     )
 
     self.opt.set_initial(self.U, sol.value(self.U))
@@ -131,7 +138,9 @@ class Ismpc:
     if contact == 'ss':
       contact = self.footstep_planner.plan[self.footstep_planner.get_step_index_at_time(t)]['foot_id']
 
-    return self.lip_state, contact, p_cmd
+    xi_error_int = self.xi_error_int
+
+    return self.lip_state, contact, p_cmd, xi_error_int
   
   def generate_moving_constraint(self, t):
     mc_x = np.full(self.N, (self.initial['lfoot']['pos'][3] + self.initial['rfoot']['pos'][3]) / 2.)
