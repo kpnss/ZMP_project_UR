@@ -95,7 +95,7 @@ class Ismpc:
     self.opt.set_value(self.zmp_z_mid_param, mc_z)
 
     sol = self.opt.solve()
-    self.x = sol.value(self.X[:,1])
+    #self.x = sol.value(self.X[:,1]) # rimosso perchè non uso piu mpc
     self.u = sol.value(self.U[:,0])
 
     p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD
