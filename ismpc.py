@@ -99,16 +99,11 @@ class Ismpc:
     self.opt.set_value(self.zmp_z_mid_param, mc_z)
 
     sol = self.opt.solve()
-    # self.x = sol.value(self.X[:,1])
-    self.x = np.array([
-        current['com']['pos'][0], current['com']['vel'][0], current['zmp']['pos'][0],
-        current['com']['pos'][1], current['com']['vel'][1], current['zmp']['pos'][1],
-        current['com']['pos'][2], current['com']['vel'][2], current['zmp']['pos'][2]
-    ])
+    # self.x = sol.value(self.X[:,1]) # rimossa
 
     self.u = sol.value(self.U[:,0])
 
-    p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD
+    p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD prodotta da MPC
 
     p_meas  = current['zmp']['pos']
 
