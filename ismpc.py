@@ -23,7 +23,7 @@ class Ismpc:
 
 
     # lip model matrices
-    self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]])
+    self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]]) # per aggiungere il lag g_p basta cambiare il terzo 0 del terzo vettore
     self.B_lip = np.array([[0], [0], [1]])
 
     # dynamics
