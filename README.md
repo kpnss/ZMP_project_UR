@@ -57,7 +57,7 @@ The complete block diagram is shown below. Some modifications that were tested w
      |   Low level control            |      +---------------------------+        |
      |                                +----->|                           |        |
      |   +-------------------+               |     INVERSE DYNAMICS      |        |
-     |   |   Kalman Filter   |<---(x_flt)----|        (id.py)            |        |
+     |   |   Kalman Filter   |----(x_flt)--->|        (id.py)            |        |
      |   +-------------------+               |                           |        |
      |_________^_____________________________|____________|______________|________|
                |                                          |
