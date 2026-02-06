@@ -31,8 +31,8 @@ then press spacebar to start it
 
 # Block Diagram
 The complete block diagram is shown below. Some modifications that were tested were to delete feedback to MPC and passage through Kalman Filter, but this is the most complete diagram.
-                                 _________________________________________________
-                                |                     PLANNING                    |
+_________________________________________________
+                                |                    PLANNING                     |
                                 |  +-------------------+    +------------------+  |
                                 |  | Footstep Planner  |--->| Foot Traj. Gen.  |  |
                                 |  +-------------------+    +------------------+  |
@@ -50,14 +50,14 @@ The complete block diagram is shown below. Some modifications that were tested w
      |         ^                      ^ (Feedback) |                  |           |
      |_________|______________________|____________|__________________|___________|
                |                      |            |                  |
-               |                      |            | p_cmd            | (Desired State)
-               | (State Estimate)     |            V                  V
-      _________|______________________|___________________________________________
+               |                      |            |                  |
+               | (State Estimate)     |            | p_cmd            | (Desired State)
+      _________|______________________|____________V__________________V___________
      |         |                      |                                           |
      |   Low level control            |      +---------------------------+        |
-     |                                +----->|                           |        |
-     |   +-------------------+               |     INVERSE DYNAMICS      |        |
-     |   |   Kalman Filter   |<---(x_flt)----|        (id.py)            |        |
+     |                                |      |                           |        |
+     |   +-------------------+        +------|      INVERSE DYNAMICS     |        |
+     |   |   Kalman Filter   |---(x_flt)---->|         (id.py)           |        |
      |   +-------------------+               |                           |        |
      |_________^_____________________________|____________|______________|________|
                |                                          |
@@ -66,7 +66,7 @@ The complete block diagram is shown below. Some modifications that were tested w
      |         |                                          |                       |
      |      Physics                                       V                       |
      |                                       +----------------------------+       |
-     |                                       |       ROBOT (HRP-4)        |       |
-     |                                       |       (DART Engine)        |       |
+     |                                       |        ROBOT (HRP-4)       |       |
+     |                                       |        (DART Engine)       |       |
      |                                       +----------------------------+       |
      |____________________________________________________________________________|
