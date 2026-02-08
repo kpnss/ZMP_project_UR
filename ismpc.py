@@ -98,7 +98,7 @@ class Ismpc:
 
     mc_x, mc_y, mc_z = self.generate_moving_constraint(t)
 
-    # MPC: sempre inizializzato sullo stato misurato
+    # MPC sempre inizializzato sullo stato misurato
     self.opt.set_value(self.x0_param, x_meas)
     self.opt.set_value(self.zmp_x_mid_param, mc_x)
     self.opt.set_value(self.zmp_y_mid_param, mc_y)
@@ -116,7 +116,6 @@ class Ismpc:
         x_meas[[1, 4, 7]]
     )
 
-    # misure reali
     p_meas  = current['zmp']['pos']
     xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
 
@@ -127,7 +126,7 @@ class Ismpc:
         - self.k_2 * (p_meas  - p_ref)
     )
 
-    # output lip_state (qui ha senso usare x_meas)
+    # output lip_state
     self.lip_state['com']['pos'] = x_meas[[0, 3, 6]]
     self.lip_state['com']['vel'] = x_meas[[1, 4, 7]]
     self.lip_state['zmp']['pos'] = x_meas[[2, 5, 8]]
