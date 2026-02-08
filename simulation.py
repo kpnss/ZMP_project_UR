@@ -30,7 +30,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'dof': self.hrp4.getNumDofs(),
 
             # nuove variabili
-            'alpha': -4.0,             # guadagno su CP
+            'alpha': -2.0,             # guadagno su CP modificato sennò non funzionava
             'beta': -8.0,              # guadagno su ZMP
             'g_p': 20.0,               # guadagno per il delay
         }
@@ -144,6 +144,9 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # update kalman filter
         u = np.array([self.desired['zmp']['vel'][0], self.desired['zmp']['vel'][1], self.desired['zmp']['vel'][2]])
+
+        # se non si vuole usare il kf si commenta questa parte 
+        
         self.kf.predict(u)
         x_flt, _ = self.kf.update(np.array([self.current['com']['pos'][0], self.current['com']['vel'][0], self.current['zmp']['pos'][0], \
                                             self.current['com']['pos'][1], self.current['com']['vel'][1], self.current['zmp']['pos'][1], \
