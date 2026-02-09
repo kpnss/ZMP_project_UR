@@ -3,7 +3,7 @@ import dartpy as dart
 import copy
 from utils import *
 import os
-import ismpc
+import ismpc 
 import footstep_planner
 import inverse_dynamics as id
 import filter
@@ -30,7 +30,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'dof': self.hrp4.getNumDofs(),
 
             # nuove variabili
-            'alpha': -2.0,             # guadagno su CP modificato sennò non funzionava
+            'alpha': -4.0,             # guadagno su CP modificato sennò non funzionava
             'beta': -8.0,              # guadagno su ZMP
             'g_p': 20.0,               # guadagno per il delay
         }
