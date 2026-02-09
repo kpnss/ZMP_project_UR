@@ -99,7 +99,6 @@ class Ismpc:
     self.opt.set_value(self.zmp_z_mid_param, mc_z)
 
     sol = self.opt.solve()
-    # self.x = sol.value(self.X[:,1]) # rimossa
 
     self.u = sol.value(self.U[:,0])
 
@@ -154,21 +153,3 @@ class Ismpc:
   
   def compute_cp(self, com_pos, com_vel):
     return com_pos + com_vel / self.eta
-
-  def cp_zmp_balance_control(self, current, p_ref):
-      # CP misurato
-      xi = self.compute_cp(
-          current['com']['pos'],
-          current['com']['vel']
-      )
-
-      # CP di riferimento (coerente con ZMP MPC)
-      xi_ref = p_ref.copy()
-
-      # CP-ZMP feedback (Eq. 12)
-      dp = (
-          - self.k_1 * (xi - xi_ref)
-          - self.k_2 * (current['zmp']['pos'] - p_ref)
-      )
-
-      return dp
