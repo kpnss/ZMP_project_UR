@@ -30,7 +30,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'dof': self.hrp4.getNumDofs(),
 
             # nuove variabili
-            'alpha': -4.0,             # guadagno su CP modificato sennò non funzionava
+            'alpha': -4.0,             # guadagno su CP 
             'beta': -8.0,              # guadagno su ZMP
             'g_p': 20.0,               # guadagno per il delay
         }
