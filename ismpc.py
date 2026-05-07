@@ -107,8 +107,8 @@ class Ismpc:
     p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD
 
     xi_ref = self.compute_cp(
-        self.x[[0, 3, 6]],   
-        self.x[[1, 4, 7]]    
+      self.x_pred[[0, 3, 6]],
+      self.x_pred[[1, 4, 7]]
     ) # FEEDBACK
 
     p_meas  = current['zmp']['pos']

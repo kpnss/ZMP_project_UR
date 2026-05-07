@@ -28,6 +28,22 @@ python simulation.py
 ```
 then press spacebar to start it
 
+To export logs for offline plotting:
+```
+python simulation.py --log-path logs/run_kf_on.npz
+```
+
+To run without Kalman filter (for KF removal experiments):
+```
+python simulation.py --no-kf --log-path logs/run_kf_off.npz
+```
+
+To plot one or multiple runs:
+```
+python plot_logs.py logs/run_kf_on.npz
+python plot_logs.py --compare logs/run_kf_on.npz logs/run_kf_off.npz
+```
+
 # Block Diagram
 The complete block diagram is shown below. Some modifications that were tested were to delete feedback to MPC and passage through Kalman Filter, but this is the most complete diagram.
 

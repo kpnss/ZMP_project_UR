@@ -59,7 +59,7 @@ class FootstepPlanner:
         for i in range(len(self.plan)):
             t += self.plan[i]['ss_duration'] + self.plan[i]['ds_duration']
             if t > time: return i
-        return None
+        return len(self.plan) - 1
 
     def get_start_time(self, step_index):
         t = 0

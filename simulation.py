@@ -3,6 +3,7 @@ import dartpy as dart
 import copy
 from utils import *
 import os
+import argparse
 import ismpc 
 import footstep_planner
 import inverse_dynamics as id
@@ -11,18 +12,22 @@ import foot_trajectory_generator as ftg
 from logger import Logger
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
-    def __init__(self, world, hrp4):
+    def __init__(self, world, hrp4, log_path=None, autosave_every=200, use_kf=True):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
         self.time = 0
+        self.prev_zmp = None
+        self.log_path = log_path
+        self.autosave_every = autosave_every
+        self.use_kf = use_kf
         self.params = {
             'g': 9.81,
             'h': 0.72,
             'foot_size': 0.1,
-            'step_height': 0.02,
-            'ss_duration': 70,
-            'ds_duration': 30,
+            'step_height': 0.05,
+            'ss_duration': 30,
+            'ds_duration': 10,
             'world_time_step': world.getTimeStep(),
             'first_swing': 'rfoot',
             'µ': 0.5,
@@ -30,20 +35,21 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'dof': self.hrp4.getNumDofs(),
 
             # nuove variabili
-            'alpha': -4.0,             # guadagno su CP 
+            'alpha': -1.0,             # guadagno su CP 
             'beta': -8.0,              # guadagno su ZMP
-            'g_p': 20.0,               # guadagno per il delay
+            'g_p': 10.0,               # guadagno per il delay
         }
         # frequenza naturale del modello LIP
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
 
         # guadagni di feedback per CP/ZMP (paper)
         self.params['k_1'] = -((self.params['alpha'] - self.params['eta']) *
-                            (self.params['beta'] - self.params['eta'])) / self.params['eta'] * self.params['g_p']
+                            (self.params['beta'] - self.params['eta'])) / (self.params['eta'] * self.params['g_p'])
 
         self.params['k_2'] = -((self.params['alpha'] + self.params['beta'] - self.params['eta'] + 
                                 self.params['g_p']) / self.params['g_p'])
 
+        print(f"Computed feedback gains: k_1 = {self.params['k_1']:.4f}, k_2 = {self.params['k_2']:.4f}")
 
         # robot links
         self.lsole = hrp4.getBodyNode('l_sole')
@@ -78,6 +84,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # initialize state
         self.initial = self.retrieve_state()
+        self.prev_zmp = self.initial['zmp']['pos'].copy()
         self.contact = 'lfoot' if self.params['first_swing'] == 'rfoot' else 'rfoot' # there is a dummy footstep
         self.desired = copy.deepcopy(self.initial)
 
@@ -147,21 +154,22 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # se non si vuole usare il kf si commenta questa parte 
         
-        self.kf.predict(u)
-        x_flt, _ = self.kf.update(np.array([self.current['com']['pos'][0], self.current['com']['vel'][0], self.current['zmp']['pos'][0], \
-                                            self.current['com']['pos'][1], self.current['com']['vel'][1], self.current['zmp']['pos'][1], \
-                                            self.current['com']['pos'][2], self.current['com']['vel'][2], self.current['zmp']['pos'][2]]))
-        
-        # update current state using kalman filter output
-        self.current['com']['pos'][0] = x_flt[0]
-        self.current['com']['vel'][0] = x_flt[1]
-        self.current['zmp']['pos'][0] = x_flt[2]
-        self.current['com']['pos'][1] = x_flt[3]
-        self.current['com']['vel'][1] = x_flt[4]
-        self.current['zmp']['pos'][1] = x_flt[5]
-        self.current['com']['pos'][2] = x_flt[6]
-        self.current['com']['vel'][2] = x_flt[7]
-        self.current['zmp']['pos'][2] = x_flt[8]
+        if self.use_kf:
+            self.kf.predict(u)
+            x_flt, _ = self.kf.update(np.array([self.current['com']['pos'][0], self.current['com']['vel'][0], self.current['zmp']['pos'][0], \
+                                                self.current['com']['pos'][1], self.current['com']['vel'][1], self.current['zmp']['pos'][1], \
+                                                self.current['com']['pos'][2], self.current['com']['vel'][2], self.current['zmp']['pos'][2]]))
+            
+            # update current state using kalman filter output
+            self.current['com']['pos'][0] = x_flt[0]
+            self.current['com']['vel'][0] = x_flt[1]
+            self.current['zmp']['pos'][0] = x_flt[2]
+            self.current['com']['pos'][1] = x_flt[3]
+            self.current['com']['vel'][1] = x_flt[4]
+            self.current['zmp']['pos'][1] = x_flt[5]
+            self.current['com']['pos'][2] = x_flt[6]
+            self.current['com']['vel'][2] = x_flt[7]
+            self.current['zmp']['pos'][2] = x_flt[8]
 
         # get references using mpc
         lip_state, contact, p_cmd = self.mpc.solve(self.current, self.time)
@@ -193,8 +201,16 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             self.hrp4.setCommand(i + 6, commands[i])
 
         # log and plot
-        self.logger.log_data(self.current, self.desired)
+        self.logger.log_data(self.desired, self.current)
         #self.logger.update_plot(self.time)
+
+        if self.log_path is not None and self.autosave_every > 0 and (self.time + 1) % self.autosave_every == 0:
+                self.logger.save_npz(
+                self.log_path,
+                time_step=self.params['world_time_step'],
+                use_kf=self.use_kf,
+                steps=self.time + 1
+            )
 
         self.time += 1
 
@@ -223,25 +239,30 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # compute total contact force
         force = np.zeros(3)
-        for contact in world.getLastCollisionResult().getContacts():
+        for contact in self.world.getLastCollisionResult().getContacts():
             force += contact.force
 
         # compute zmp
         zmp = np.zeros(3)
         zmp[2] = com_position[2] - force[2] / (self.hrp4.getMass() * self.params['g'] / self.params['h'])
-        for contact in world.getLastCollisionResult().getContacts():
+        for contact in self.world.getLastCollisionResult().getContacts():
             if contact.force[2] <= 0.1: continue
             zmp[0] += (contact.point[0] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[0] / force[2])
             zmp[1] += (contact.point[1] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[1] / force[2])
 
         if force[2] <= 0.1: # threshold for when we lose contact
-            zmp = np.array([0., 0., 0.]) # FIXME: this should return previous measurement
+            if self.prev_zmp is not None:
+                zmp = self.prev_zmp.copy()
+            else:
+                zmp = np.array([0., 0., 0.])
         else:
             # sometimes we get contact points that dont make sense, so we clip the ZMP close to the robot
-            midpoint = (l_foot_position + l_foot_position) / 2.
+            midpoint = (l_foot_position + r_foot_position) / 2.
             zmp[0] = np.clip(zmp[0], midpoint[0] - 0.3, midpoint[0] + 0.3)
             zmp[1] = np.clip(zmp[1], midpoint[1] - 0.3, midpoint[1] + 0.3)
             zmp[2] = np.clip(zmp[2], midpoint[2] - 0.3, midpoint[2] + 0.3)
+
+        self.prev_zmp = zmp.copy()
 
         # create state dict
         return {
@@ -269,6 +290,12 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         }
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run HRP-4 simulation with optional log export.")
+    parser.add_argument("--log-path", type=str, default="logs/log.npz", help="Optional path to save simulation logs as .npz.")
+    parser.add_argument("--autosave-every", type=int, default=200, help="Autosave frequency in simulation steps.")
+    parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
+    args = parser.parse_args()
+
     world = dart.simulation.World()
 
     urdfParser = dart.utils.DartLoader()
@@ -287,7 +314,7 @@ if __name__ == "__main__":
             body.setMass(1e-8)
             body.setInertia(default_inertia)
 
-    node = Hrp4Controller(world, hrp4)
+    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf)
 
     # create world node and add it to viewer
     viewer = dart.gui.osg.Viewer()
@@ -300,4 +327,13 @@ if __name__ == "__main__":
     viewer.setCameraHomePosition([5., -1., 1.5],
                                  [1.,  0., 0.5],
                                  [0.,  0., 1. ])
-    viewer.run()
+    try:
+        viewer.run()
+    finally:
+        if args.log_path is not None:
+            node.logger.save_npz(
+                args.log_path,
+                time_step=node.params['world_time_step'],
+                use_kf=node.use_kf,
+                steps=node.time
+            )

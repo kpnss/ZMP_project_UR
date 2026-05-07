@@ -33,6 +33,32 @@ class FootTrajectoryGenerator:
             }
         }
 
+    # if we are past the last planned step, keep the final poses
+    if step_index >= len(self.plan) - 1:
+        support_pose = np.hstack((
+            self.plan[step_index]['ang'],
+            self.plan[step_index]['pos']
+        ))
+        prev_index = max(step_index - 1, 0)
+        swing_pose = np.hstack((
+            self.plan[prev_index]['ang'],
+            self.plan[prev_index]['pos']
+        ))
+        zero_vel = np.zeros(6)
+        zero_acc = np.zeros(6)
+        return {
+            support_foot: {
+                'pos': support_pose,
+                'vel': zero_vel,
+                'acc': zero_acc
+            },
+            swing_foot: {
+                'pos': swing_pose,
+                'vel': zero_vel,
+                'acc': zero_acc
+            }
+        }
+
     # if double support, return planned foot poses with zero velocities and accelerations
     if phase == 'ds':
         support_pose = np.hstack((
