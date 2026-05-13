@@ -34,20 +34,18 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'N': 100,
             'dof': self.hrp4.getNumDofs(),
 
-            # nuove variabili
-            'alpha': -1.0,             # guadagno su CP 
-            'beta': -8.0,              # guadagno su ZMP
-            'g_p': 10.0,               # guadagno per il delay
+            # CP feedback pole (desired closed-loop CP pole, must be < 0)
+            'alpha': -1.0,
         }
-        # frequenza naturale del modello LIP
+        # natural frequency of the LIP model
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
 
-        # guadagni di feedback per CP/ZMP (paper)
-        self.params['k_1'] = -((self.params['alpha'] - self.params['eta']) *
-                            (self.params['beta'] - self.params['eta'])) / (self.params['eta'] * self.params['g_p'])
-
-        self.params['k_2'] = -((self.params['alpha'] + self.params['beta'] - self.params['eta'] + 
-                                self.params['g_p']) / self.params['g_p'])
+        # Gains for the lagless IS-MPC plant (ZMP tracked instantaneously via velocity input).
+        # Derived by placing the CP error pole at alpha: lambda = eta*(1 + k_1/(1+k_2)).
+        # With k_2=0 (no ZMP error feedback needed when ZMP response is fast):
+        #   k_1 = alpha/eta - 1
+        self.params['k_1'] = self.params['alpha'] / self.params['eta'] - 1.0
+        self.params['k_2'] = 0.0
 
         print(f"Computed feedback gains: k_1 = {self.params['k_1']:.4f}, k_2 = {self.params['k_2']:.4f}")
 
@@ -237,18 +235,20 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         l_foot_spatial_velocity = self.lsole.getSpatialVelocity(relativeTo=dart.dynamics.Frame.World(), inCoordinatesOf=dart.dynamics.Frame.World())
         r_foot_spatial_velocity = self.rsole.getSpatialVelocity(relativeTo=dart.dynamics.Frame.World(), inCoordinatesOf=dart.dynamics.Frame.World())
 
-        # compute total contact force
+        # Only use contacts with meaningful normal force so the denominator and
+        # the weighted ZMP sum are consistent with each other.
+        valid_contacts = [c for c in self.world.getLastCollisionResult().getContacts()
+                          if c.force[2] > 0.1]
+
         force = np.zeros(3)
-        for contact in self.world.getLastCollisionResult().getContacts():
+        for contact in valid_contacts:
             force += contact.force
 
-        # compute zmp
+        # compute zmp (z set to floor level; horizontal components from moment balance)
         zmp = np.zeros(3)
-        zmp[2] = com_position[2] - force[2] / (self.hrp4.getMass() * self.params['g'] / self.params['h'])
-        for contact in self.world.getLastCollisionResult().getContacts():
-            if contact.force[2] <= 0.1: continue
-            zmp[0] += (contact.point[0] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[0] / force[2])
-            zmp[1] += (contact.point[1] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[1] / force[2])
+        for contact in valid_contacts:
+            zmp[0] += contact.point[0] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[0] / force[2]
+            zmp[1] += contact.point[1] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[1] / force[2]
 
         if force[2] <= 0.1: # threshold for when we lose contact
             if self.prev_zmp is not None:

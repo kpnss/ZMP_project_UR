@@ -14,11 +14,8 @@ class Ismpc:
     self.footstep_planner = footstep_planner
     self.sigma = lambda t, t0, t1: np.clip((t - t0) / (t1 - t0), 0, 1) # piecewise linear sigmoidal function
 
-    # nuove variabili
     self.k_1 = params['k_1']
     self.k_2 = params['k_2']
-    self.alpha = params['alpha']
-    self.beta = params['beta']
     self.eta = params['eta']
 
 
@@ -69,12 +66,15 @@ class Ismpc:
     self.opt.subject_to(self.X[:, 0] == self.x0_param)
 
     # stability constraint with periodic tail
-    self.opt.subject_to(self.X[1, 0     ] + self.eta * (self.X[0, 0     ] - self.X[2, 0     ]) == \
-                        self.X[1, self.N] + self.eta * (self.X[0, self.N] - self.X[2, self.N]))
-    self.opt.subject_to(self.X[4, 0     ] + self.eta * (self.X[3, 0     ] - self.X[5, 0     ]) == \
-                        self.X[4, self.N] + self.eta * (self.X[3, self.N] - self.X[5, self.N]))
-    self.opt.subject_to(self.X[7, 0     ] + self.eta * (self.X[6, 0     ] - self.X[8, 0     ]) == \
-                        self.X[7, self.N] + self.eta * (self.X[6, self.N] - self.X[8, self.N]))
+    # Periodic-tail terminal constraint: CP (divergent component x_u = x_c + ẋ_c/η)
+    # is the same at the start and end of the horizon, i.e. x_u(0) = x_u(N).
+    # Equivalent to: X[1] + η*X[0] == const  (no ZMP term — that was wrong).
+    self.opt.subject_to(self.X[1, 0     ] + self.eta * self.X[0, 0     ] == \
+                        self.X[1, self.N] + self.eta * self.X[0, self.N])
+    self.opt.subject_to(self.X[4, 0     ] + self.eta * self.X[3, 0     ] == \
+                        self.X[4, self.N] + self.eta * self.X[3, self.N])
+    self.opt.subject_to(self.X[7, 0     ] + self.eta * self.X[6, 0     ] == \
+                        self.X[7, self.N] + self.eta * self.X[6, self.N])
 
     # state
     self.x = np.zeros(9)
@@ -86,6 +86,7 @@ class Ismpc:
         initial['com']['pos'][1], initial['com']['vel'][1], initial['zmp']['pos'][1],
         initial['com']['pos'][2], initial['com']['vel'][2], initial['zmp']['pos'][2],
     ])
+    self._xi_ref_prev = None  # stores x_pred from previous solve for CP reference
 
   def solve(self, current, t):
     self.x = np.array([current['com']['pos'][0], current['com']['vel'][0], current['zmp']['pos'][0],
@@ -104,24 +105,30 @@ class Ismpc:
     self.x_pred = sol.value(self.X[:,1]) 
     self.u = sol.value(self.U[:,0])
 
-    p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD
-
-    xi_ref = self.compute_cp(
-      self.x_pred[[0, 3, 6]],
-      self.x_pred[[1, 4, 7]]
-    ) # FEEDBACK
-
     p_meas  = current['zmp']['pos']
-    xi_meas = self.compute_cp(
-        current['com']['pos'],
-        current['com']['vel']
-    ) # FEEDBACK
+    xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
+
+    # Both xi_ref and p_ref must come from the same time instant (Morisawa eq. 14-15):
+    # the reference at the *current* time t is the previous solve's one-step prediction.
+    # On the first call there is no stored prediction, so corrections are zero.
+    if self._xi_ref_prev is not None:
+        xi_ref = self.compute_cp(
+            self._xi_ref_prev[[0, 3, 6]],
+            self._xi_ref_prev[[1, 4, 7]]
+        )
+        p_ref = self._xi_ref_prev[[2, 5, 8]]
+    else:
+        xi_ref = xi_meas
+        p_ref  = sol.value(self.X[[2, 5, 8], 1])
 
     p_cmd = (
         p_ref
         - self.k_1 * (xi_meas - xi_ref)
         - self.k_2 * (p_meas  - p_ref)
     )
+
+    # Save this step's prediction so the next call has the reference for time t+δ
+    self._xi_ref_prev = self.x_pred.copy()
 
     self.opt.set_initial(self.U, sol.value(self.U))
     self.opt.set_initial(self.X, sol.value(self.X))
