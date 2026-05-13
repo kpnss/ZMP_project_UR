@@ -33,6 +33,8 @@ class FootTrajectoryGenerator:
             }
         }
 
+    next_index = min(step_index + 1, len(self.plan) - 1)
+
     # if double support, return planned foot poses with zero velocities and accelerations
     if phase == 'ds':
         support_pose = np.hstack((
@@ -40,8 +42,8 @@ class FootTrajectoryGenerator:
             self.plan[step_index]['pos']
         ))
         swing_pose = np.hstack((
-            self.plan[step_index + 1]['ang'],
-            self.plan[step_index + 1]['pos']
+            self.plan[next_index]['ang'],
+            self.plan[next_index]['pos']
         ))
         zero_vel = np.zeros(6)
         zero_acc = np.zeros(6)
@@ -60,9 +62,9 @@ class FootTrajectoryGenerator:
     
     # get positions and angles for cubic interpolation
     start_pos  = self.plan[step_index - 1]['pos']
-    target_pos = self.plan[step_index + 1]['pos']
+    target_pos = self.plan[next_index]['pos']
     start_ang  = self.plan[step_index - 1]['ang']
-    target_ang = self.plan[step_index + 1]['ang']
+    target_ang = self.plan[next_index]['ang']
 
     # time variables
     t = time_in_step

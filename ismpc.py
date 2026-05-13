@@ -14,14 +14,10 @@ class Ismpc:
     self.footstep_planner = footstep_planner
     self.sigma = lambda t, t0, t1: np.clip((t - t0) / (t1 - t0), 0, 1) # piecewise linear sigmoidal function
 
-    # nuove variabili
     self.k_1 = params['k_1']
     self.k_2 = params['k_2']
     self.k_i = params['k_i']
     self.alpha = params['alpha']
-    self.beta = params['beta']
-    self.eta = params['eta']
-    self.gamma = params['gamma']
 
 
     # lip model matrices
@@ -35,7 +31,9 @@ class Ismpc:
       self.A_lip @ x[6:9] + self.B_lip @ u[2] + np.array([0, - params['g'], 0]),
     )
     self.xi_error_int = np.zeros(3)
-
+    self._xi_ref_prev = None   # stores X[:,1] from previous solve for xi_ref alignment
+    self.x_mpc = None          # internal LIP state; None until first solve
+    self.u = np.zeros(3)       # previous optimal control input
 
     # optimization problem
     self.opt = cs.Opti('conic')
@@ -72,13 +70,13 @@ class Ismpc:
     # initial state constraint
     self.opt.subject_to(self.X[:, 0] == self.x0_param)
 
-    # stability constraint with periodic tail
-    self.opt.subject_to(self.X[1, 0     ] + self.eta * (self.X[0, 0     ] - self.X[2, 0     ]) == \
-                        self.X[1, self.N] + self.eta * (self.X[0, self.N] - self.X[2, self.N]))
-    self.opt.subject_to(self.X[4, 0     ] + self.eta * (self.X[3, 0     ] - self.X[5, 0     ]) == \
-                        self.X[4, self.N] + self.eta * (self.X[3, self.N] - self.X[5, self.N]))
-    self.opt.subject_to(self.X[7, 0     ] + self.eta * (self.X[6, 0     ] - self.X[8, 0     ]) == \
-                        self.X[7, self.N] + self.eta * (self.X[6, self.N] - self.X[8, self.N]))
+    # stability constraint with periodic tail (pure CP periodicity, no ZMP subtraction)
+    self.opt.subject_to(self.X[1, 0     ] + self.eta * self.X[0, 0     ] == \
+                        self.X[1, self.N] + self.eta * self.X[0, self.N])
+    self.opt.subject_to(self.X[4, 0     ] + self.eta * self.X[3, 0     ] == \
+                        self.X[4, self.N] + self.eta * self.X[3, self.N])
+    self.opt.subject_to(self.X[7, 0     ] + self.eta * self.X[6, 0     ] == \
+                        self.X[7, self.N] + self.eta * self.X[6, self.N])
 
     # state
     self.x = np.zeros(9)
@@ -92,8 +90,21 @@ class Ismpc:
     
     mc_x, mc_y, mc_z = self.generate_moving_constraint(t)
 
+    # propagate internal LIP state (keeps QP initial condition kinematically consistent)
+    if self.x_mpc is None:
+      self.x_mpc = self.x.copy()
+    else:
+      b = self.B_lip.flatten()  # [0, 0, 1]
+      g_vec = np.array([0., -self.params['g'], 0.])
+      dx = np.concatenate([
+        self.A_lip @ self.x_mpc[0:3] + b * self.u[0],
+        self.A_lip @ self.x_mpc[3:6] + b * self.u[1],
+        self.A_lip @ self.x_mpc[6:9] + b * self.u[2] + g_vec,
+      ])
+      self.x_mpc = self.x_mpc + self.delta * dx
+
     # solve optimization problem
-    self.opt.set_value(self.x0_param, self.x)
+    self.opt.set_value(self.x0_param, self.x_mpc)
     self.opt.set_value(self.zmp_x_mid_param, mc_x)
     self.opt.set_value(self.zmp_y_mid_param, mc_y)
     self.opt.set_value(self.zmp_z_mid_param, mc_z)
@@ -108,7 +119,12 @@ class Ismpc:
 
     dt = self.params['world_time_step']
     xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
-    xi_ref  = self.compute_cp(self.x[[0, 3, 6]], self.x[[1, 4, 7]])
+    x_next = sol.value(self.X[:, 1])
+    if self._xi_ref_prev is not None:
+      xi_ref = self.compute_cp(self._xi_ref_prev[[0, 3, 6]], self._xi_ref_prev[[1, 4, 7]])
+    else:
+      xi_ref = xi_meas
+    self._xi_ref_prev = x_next
     self.xi_error_int += (xi_meas - xi_ref) * dt
 
     p_cmd = (
@@ -121,10 +137,10 @@ class Ismpc:
     self.opt.set_initial(self.U, sol.value(self.U))
     self.opt.set_initial(self.X, sol.value(self.X))
 
-    # create output LIP state da MPC
-    self.lip_state['com']['pos'] = np.array([self.x[0], self.x[3], self.x[6]])
-    self.lip_state['com']['vel'] = np.array([self.x[1], self.x[4], self.x[7]])
-    self.lip_state['zmp']['pos'] = np.array([self.x[2], self.x[5], self.x[8]])
+    # create output LIP state da MPC (use internal propagated state, not raw sensor)
+    self.lip_state['com']['pos'] = np.array([self.x_mpc[0], self.x_mpc[3], self.x_mpc[6]])
+    self.lip_state['com']['vel'] = np.array([self.x_mpc[1], self.x_mpc[4], self.x_mpc[7]])
+    self.lip_state['zmp']['pos'] = np.array([self.x_mpc[2], self.x_mpc[5], self.x_mpc[8]])
     self.lip_state['zmp']['vel'] = self.u
     self.lip_state['com']['acc'] = self.eta**2 * (self.lip_state['com']['pos'] - self.lip_state['zmp']['pos']) + np.hstack([0, 0, - self.params['g']])
 
