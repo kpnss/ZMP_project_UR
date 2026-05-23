@@ -3,7 +3,7 @@ import dartpy as dart
 import copy
 from utils import *
 import os
-import ismpc
+import cp_controller
 import footstep_planner
 import inverse_dynamics as id
 import filter
@@ -28,8 +28,21 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'µ': 0.5,
             'N': 100,
             'dof': self.hrp4.getNumDofs(),
+            
+            'alpha': -4.0, # guadagno su CP 
+            'beta': -8.0,  # guadagno su ZMP
+            'g_p': 20.0,   # guadagno per il delay
         }
+        
+        # frequenza naturale del modello LIP
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
+
+        # guadagni di feedback per CP/ZMP
+        self.params['k_1'] = -((self.params['alpha'] - self.params['eta']) *
+                            (self.params['beta'] - self.params['eta'])) / (self.params['eta'] * self.params['g_p'])
+
+        self.params['k_2'] = -((self.params['alpha'] + self.params['beta'] - self.params['eta'] + 
+                                self.params['g_p']) / self.params['g_p'])
 
         # robot links
         self.lsole = hrp4.getBodyNode('l_sole')
@@ -85,8 +98,8 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             self.params
             )
 
-        # initialize MPC controller
-        self.mpc = ismpc.Ismpc(
+        # initialize CP Balance controller
+        self.mpc = cp_controller.CPController(
             self.initial, 
             self.footstep_planner, 
             self.params
@@ -130,7 +143,10 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # update kalman filter
         u = np.array([self.desired['zmp']['vel'][0], self.desired['zmp']['vel'][1], self.desired['zmp']['vel'][2]])
-        self.kf.predict(u)
+
+        # se non si vuole usare il kf si commenta questa parte?
+        
+        '''self.kf.predict(u)
         x_flt, _ = self.kf.update(np.array([self.current['com']['pos'][0], self.current['com']['vel'][0], self.current['zmp']['pos'][0], \
                                             self.current['com']['pos'][1], self.current['com']['vel'][1], self.current['zmp']['pos'][1], \
                                             self.current['com']['pos'][2], self.current['com']['vel'][2], self.current['zmp']['pos'][2]]))
@@ -144,16 +160,18 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.current['zmp']['pos'][1] = x_flt[5]
         self.current['com']['pos'][2] = x_flt[6]
         self.current['com']['vel'][2] = x_flt[7]
-        self.current['zmp']['pos'][2] = x_flt[8]
+        self.current['zmp']['pos'][2] = x_flt[8]'''
 
-        # get references using mpc
-        lip_state, contact = self.mpc.solve(self.current, self.time)
+        # get references
+        lip_state, contact, p_cmd = self.mpc.solve(self.current, self.time)
 
         self.desired['com']['pos'] = lip_state['com']['pos']
         self.desired['com']['vel'] = lip_state['com']['vel']
         self.desired['com']['acc'] = lip_state['com']['acc']
-        self.desired['zmp']['pos'] = lip_state['zmp']['pos']
-        self.desired['zmp']['vel'] = lip_state['zmp']['vel']
+        
+        # ZMP Balance Control
+        self.desired['zmp']['pos'] = p_cmd
+        self.desired['zmp']['vel'] = (p_cmd - self.current['zmp']['pos']) / self.params['world_time_step']
 
         # get foot trajectories
         feet_trajectories = self.foot_trajectory_generator.generate_feet_trajectories_at_time(self.time)
@@ -180,12 +198,12 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.time += 1
 
     def retrieve_state(self):
-        # com and torso pose (orientation and position)
+        # com and torso pose
         com_position = self.hrp4.getCOM()
         torso_orientation = get_rotvec(self.hrp4.getBodyNode('torso').getTransform(withRespectTo=dart.dynamics.Frame.World(), inCoordinatesOf=dart.dynamics.Frame.World()).rotation())
         base_orientation  = get_rotvec(self.hrp4.getBodyNode('body' ).getTransform(withRespectTo=dart.dynamics.Frame.World(), inCoordinatesOf=dart.dynamics.Frame.World()).rotation())
 
-        # feet poses (orientation and position)
+        # feet poses
         l_foot_transform = self.lsole.getTransform(withRespectTo=dart.dynamics.Frame.World(), inCoordinatesOf=dart.dynamics.Frame.World())
         l_foot_orientation = get_rotvec(l_foot_transform.rotation())
         l_foot_position = l_foot_transform.translation()
@@ -216,7 +234,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             zmp[1] += (contact.point[1] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[1] / force[2])
 
         if force[2] <= 0.1: # threshold for when we lose contact
-            zmp = np.array([0., 0., 0.]) # FIXME: this should return previous measurement
+            zmp = np.array([0., 0., 0.]) # this should return previous measurement
         else:
             # sometimes we get contact points that dont make sense, so we clip the ZMP close to the robot
             midpoint = (l_foot_position + l_foot_position) / 2.
