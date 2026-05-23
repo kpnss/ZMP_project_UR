@@ -284,6 +284,9 @@ if __name__ == "__main__":
     parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
     args = parser.parse_args()
 
+    if args.no_kf:
+        args.log_path = "logs/log_no-kf.npz"
+
     world = dart.simulation.World()
 
     urdfParser = dart.utils.DartLoader()

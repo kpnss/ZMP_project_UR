@@ -28,6 +28,16 @@ python simulation.py
 ```
 then press spacebar to start it
 
+You can disable the Kalman Filter by executing:
+```
+python simulation.py --no-kf
+```
+
+After executing the simulation, you can generate the plots by running
+```
+python plot_logs.py logs/log.npz
+```
+
 # Block Diagram
 The complete block diagram is shown below. Some modifications that were tested were to delete feedback to MPC and passage through Kalman Filter, but this is the most complete diagram.
 

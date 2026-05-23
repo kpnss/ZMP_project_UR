@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,7 +11,22 @@ AXES = ("x", "y", "z")
 def load_run(path):
     data = np.load(path, allow_pickle=False)
     time_step = float(data["time_step"]) if "time_step" in data else 0.01
-    return data, time_step
+    use_kf = bool(data["meta_use_kf"]) if "meta_use_kf" in data else None
+    return data, time_step, use_kf
+
+
+def kf_label(use_kf):
+    """Return a human-readable KF tag for plot titles."""
+    if use_kf is None:
+        return ""
+    return " [KF]" if use_kf else " [no KF]"
+
+
+def kf_suffix(use_kf):
+    """Return a file-name-safe KF suffix."""
+    if use_kf is None:
+        return ""
+    return "_kf" if use_kf else "_no_kf"
 
 
 def get_series(data, batch, item, level):
@@ -42,8 +58,10 @@ def add_position_plots_xy(ax, desired, current, title, label_prefix, xy_limits=N
     ax[0].plot(current[:, 0], current[:, 1], "--", alpha=0.7, label=f"{label_prefix} current xy")
 
     # Overlay all timestamps as points on the same x-y plane.
-    ax[0].scatter(desired[:, 0], desired[:, 1], c=t_des, cmap="Blues", s=10, alpha=0.5, label=f"{label_prefix} desired samples")
-    ax[0].scatter(current[:, 0], current[:, 1], c=t_cur, cmap="Reds", s=10, alpha=0.5, label=f"{label_prefix} current samples")
+    # Labels start with "_" so matplotlib excludes them from the legend
+    # (colourmap scatter entries have no clean legend symbol).
+    ax[0].scatter(desired[:, 0], desired[:, 1], c=t_des, cmap="Blues", s=10, alpha=0.5, label="_nolegend_")
+    ax[0].scatter(current[:, 0], current[:, 1], c=t_cur, cmap="Reds",  s=10, alpha=0.5, label="_nolegend_")
 
     ax[0].set_xlabel(f"{title} x [m]")
     ax[0].set_ylabel(f"{title} y [m]")
@@ -80,7 +98,7 @@ def compute_xi(com_pos, com_vel, eta):
 
 
 def plot_single_run(log_path, run_label, eta, xy_limits=None):
-    data, dt = load_run(log_path)
+    data, dt, use_kf = load_run(log_path)
     d_com, c_com, n_com = truncate_pair(
         get_series(data, "desired", "com", "pos"),
         get_series(data, "current", "com", "pos"),
@@ -100,39 +118,51 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
     t_zmp = np.arange(n_zmp) * dt
     t_xi = np.arange(n_xi) * dt
 
+    stem = Path(log_path).stem
+    kf_lbl = kf_label(use_kf)
+    kf_sfx = kf_suffix(use_kf)
+
     fig1, ax1 = plt.subplots(2, 1, figsize=(10, 7))
-    fig1.suptitle(f"COM trajectories - {run_label}")
+    fig1.suptitle(f"COM trajectories{kf_lbl} - {run_label}")
     add_position_plots_xy(ax1, d_com, c_com, "COM", run_label, xy_limits=xy_limits)
     ax1[0].legend(loc="upper right", fontsize=8)
 
     fig2, ax2 = plt.subplots(2, 1, figsize=(10, 7))
-    fig2.suptitle(f"ZMP trajectories - {run_label}")
+    fig2.suptitle(f"ZMP trajectories{kf_lbl} - {run_label}")
     add_position_plots_xy(ax2, d_zmp, c_zmp, "ZMP", run_label, xy_limits=xy_limits)
     ax2[0].legend(loc="upper right", fontsize=8)
 
     fig3, ax3 = plt.subplots(2, 1, figsize=(10, 7))
-    fig3.suptitle(f"Capture point trajectories - {run_label}")
+    fig3.suptitle(f"Capture point trajectories{kf_lbl} - {run_label}")
     add_position_plots_xy(ax3, d_xi, c_xi, "CP", run_label, xy_limits=xy_limits)
     ax3[0].legend(loc="upper right", fontsize=8)
 
     fig4, ax4 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    fig4.suptitle(f"Tracking errors (desired-current) - {run_label}")
+    fig4.suptitle(f"Tracking errors (desired-current){kf_lbl} - {run_label}")
     add_error_plots(ax4, t_com, d_com, c_com, "COM", run_label)
     add_error_plots(ax4, t_zmp, d_zmp, c_zmp, "ZMP", run_label)
     ax4[0].legend(loc="upper right", fontsize=8)
 
     fig5, ax5 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    fig5.suptitle(f"Capture point error (desired-current) - {run_label}")
+    fig5.suptitle(f"Capture point error (desired-current){kf_lbl} - {run_label}")
     add_error_plots(ax5, t_xi, d_xi, c_xi, "CP", run_label)
     ax5[0].legend(loc="upper right", fontsize=8)
 
     plt.tight_layout()
 
+    return [
+        (fig1, f"plot{kf_sfx}_{stem}_com_trajectories.png"),
+        (fig2, f"plot{kf_sfx}_{stem}_zmp_trajectories.png"),
+        (fig3, f"plot{kf_sfx}_{stem}_capture_point_trajectories.png"),
+        (fig4, f"plot{kf_sfx}_{stem}_tracking_errors.png"),
+        (fig5, f"plot{kf_sfx}_{stem}_capture_point_errors.png"),
+    ]
+
 
 def plot_comparison(log_paths, eta):
     runs = []
     for path in log_paths:
-        data, dt = load_run(path)
+        data, dt, use_kf = load_run(path)
         d_com, c_com, n_com = truncate_pair(
             get_series(data, "desired", "com", "pos"),
             get_series(data, "current", "com", "pos"),
@@ -147,9 +177,10 @@ def plot_comparison(log_paths, eta):
         n_xi = min(len(d_com), len(c_com), len(d_com_vel), len(c_com_vel))
         d_xi = compute_xi(d_com[:n_xi], d_com_vel[:n_xi], eta)
         c_xi = compute_xi(c_com[:n_xi], c_com_vel[:n_xi], eta)
+        stem = Path(path).stem
         runs.append(
             {
-                "label": Path(path).stem,
+                "label": stem + kf_label(use_kf),
                 "dt": dt,
                 "t_com": np.arange(n_com) * dt,
                 "t_zmp": np.arange(n_zmp) * dt,
@@ -191,6 +222,12 @@ def plot_comparison(log_paths, eta):
     ax3[0].legend(loc="upper right", fontsize=8)
 
     plt.tight_layout()
+
+    return [
+        (fig,  "comparison_com_errors.png"),
+        (fig2, "comparison_zmp_errors.png"),
+        (fig3, "comparison_capture_point_errors.png"),
+    ]
 
 
 def main():
@@ -235,17 +272,18 @@ def main():
     eta = args.eta if args.eta is not None else np.sqrt(args.gravity / args.lip_height)
 
     if args.compare:
-        plot_comparison(args.logs, eta)
+        figs_with_names = plot_comparison(args.logs, eta)
     else:
+        figs_with_names = []
         for log in args.logs:
-            plot_single_run(log, Path(log).stem, eta, xy_limits=xy_limits)
+            figs_with_names.extend(plot_single_run(log, Path(log).stem, eta, xy_limits=xy_limits))
 
-    # plt.show()
-    #save figures to files instead of showing them interactively
-    for i, fig in enumerate(plt.get_fignums()):
-        plt.figure(fig)
-        plt.savefig(f"logs/plot_{i}.png", dpi=300)
-    print("Plots saved as logs/plot_*.png.")
+    # save figures to files instead of showing them interactively
+    os.makedirs("logs", exist_ok=True)
+    for fig, name in figs_with_names:
+        out_path = os.path.join("logs", name)
+        fig.savefig(out_path, dpi=300)
+        print(f"Saved: {out_path}")
 
 
 if __name__ == "__main__":
