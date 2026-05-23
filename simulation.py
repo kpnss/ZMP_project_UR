@@ -146,7 +146,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # se non si vuole usare il kf si commenta questa parte?
         
-        '''self.kf.predict(u)
+        self.kf.predict(u)
         x_flt, _ = self.kf.update(np.array([self.current['com']['pos'][0], self.current['com']['vel'][0], self.current['zmp']['pos'][0], \
                                             self.current['com']['pos'][1], self.current['com']['vel'][1], self.current['zmp']['pos'][1], \
                                             self.current['com']['pos'][2], self.current['com']['vel'][2], self.current['zmp']['pos'][2]]))
@@ -160,7 +160,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.current['zmp']['pos'][1] = x_flt[5]
         self.current['com']['pos'][2] = x_flt[6]
         self.current['com']['vel'][2] = x_flt[7]
-        self.current['zmp']['pos'][2] = x_flt[8]'''
+        self.current['zmp']['pos'][2] = x_flt[8]
 
         # get references
         lip_state, contact, p_cmd = self.mpc.solve(self.current, self.time)
