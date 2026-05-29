@@ -12,7 +12,8 @@ def load_run(path):
     data = np.load(path, allow_pickle=False)
     time_step = float(data["time_step"]) if "time_step" in data else 0.01
     use_kf = bool(data["meta_use_kf"]) if "meta_use_kf" in data else None
-    return data, time_step, use_kf
+    use_mpc = bool(data["meta_use_mpc"]) if "meta_use_mpc" in data else None
+    return data, time_step, use_kf, use_mpc
 
 
 def kf_label(use_kf):
@@ -27,6 +28,20 @@ def kf_suffix(use_kf):
     if use_kf is None:
         return ""
     return "_kf" if use_kf else "_no_kf"
+
+
+def mpc_label(use_mpc):
+    """Return a human-readable controller tag for plot titles."""
+    if use_mpc is None:
+        return ""
+    return " [MPC]" if use_mpc else " [CP ctrl]"
+
+
+def mpc_suffix(use_mpc):
+    """Return a file-name-safe controller suffix."""
+    if use_mpc is None:
+        return ""
+    return "_mpc" if use_mpc else "_no_mpc"
 
 
 def get_series(data, batch, item, level):
@@ -98,7 +113,7 @@ def compute_xi(com_pos, com_vel, eta):
 
 
 def plot_single_run(log_path, run_label, eta, xy_limits=None):
-    data, dt, use_kf = load_run(log_path)
+    data, dt, use_kf, use_mpc = load_run(log_path)
     d_com, c_com, n_com = truncate_pair(
         get_series(data, "desired", "com", "pos"),
         get_series(data, "current", "com", "pos"),
@@ -121,48 +136,52 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
     stem = Path(log_path).stem
     kf_lbl = kf_label(use_kf)
     kf_sfx = kf_suffix(use_kf)
+    mpc_lbl = mpc_label(use_mpc)
+    mpc_sfx = mpc_suffix(use_mpc)
+    tag = f"{kf_lbl}{mpc_lbl}"
+    sfx = f"{kf_sfx}{mpc_sfx}"
 
     fig1, ax1 = plt.subplots(2, 1, figsize=(10, 7))
-    fig1.suptitle(f"COM trajectories{kf_lbl} - {run_label}")
+    fig1.suptitle(f"COM trajectories{tag} - {run_label}")
     add_position_plots_xy(ax1, d_com, c_com, "COM", run_label, xy_limits=xy_limits)
     ax1[0].legend(loc="upper right", fontsize=8)
 
     fig2, ax2 = plt.subplots(2, 1, figsize=(10, 7))
-    fig2.suptitle(f"ZMP trajectories{kf_lbl} - {run_label}")
+    fig2.suptitle(f"ZMP trajectories{tag} - {run_label}")
     add_position_plots_xy(ax2, d_zmp, c_zmp, "ZMP", run_label, xy_limits=xy_limits)
     ax2[0].legend(loc="upper right", fontsize=8)
 
     fig3, ax3 = plt.subplots(2, 1, figsize=(10, 7))
-    fig3.suptitle(f"Capture point trajectories{kf_lbl} - {run_label}")
+    fig3.suptitle(f"Capture point trajectories{tag} - {run_label}")
     add_position_plots_xy(ax3, d_xi, c_xi, "CP", run_label, xy_limits=xy_limits)
     ax3[0].legend(loc="upper right", fontsize=8)
 
     fig4, ax4 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    fig4.suptitle(f"Tracking errors (desired-current){kf_lbl} - {run_label}")
+    fig4.suptitle(f"Tracking errors (desired-current){tag} - {run_label}")
     add_error_plots(ax4, t_com, d_com, c_com, "COM", run_label)
     add_error_plots(ax4, t_zmp, d_zmp, c_zmp, "ZMP", run_label)
     ax4[0].legend(loc="upper right", fontsize=8)
 
     fig5, ax5 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    fig5.suptitle(f"Capture point error (desired-current){kf_lbl} - {run_label}")
+    fig5.suptitle(f"Capture point error (desired-current){tag} - {run_label}")
     add_error_plots(ax5, t_xi, d_xi, c_xi, "CP", run_label)
     ax5[0].legend(loc="upper right", fontsize=8)
 
     plt.tight_layout()
 
     return [
-        (fig1, f"plot{kf_sfx}_{stem}_com_trajectories.png"),
-        (fig2, f"plot{kf_sfx}_{stem}_zmp_trajectories.png"),
-        (fig3, f"plot{kf_sfx}_{stem}_capture_point_trajectories.png"),
-        (fig4, f"plot{kf_sfx}_{stem}_tracking_errors.png"),
-        (fig5, f"plot{kf_sfx}_{stem}_capture_point_errors.png"),
+        (fig1, f"plot{sfx}_{stem}_com_trajectories.png"),
+        (fig2, f"plot{sfx}_{stem}_zmp_trajectories.png"),
+        (fig3, f"plot{sfx}_{stem}_capture_point_trajectories.png"),
+        (fig4, f"plot{sfx}_{stem}_tracking_errors.png"),
+        (fig5, f"plot{sfx}_{stem}_capture_point_errors.png"),
     ]
 
 
 def plot_comparison(log_paths, eta):
     runs = []
     for path in log_paths:
-        data, dt, use_kf = load_run(path)
+        data, dt, use_kf, use_mpc = load_run(path)
         d_com, c_com, n_com = truncate_pair(
             get_series(data, "desired", "com", "pos"),
             get_series(data, "current", "com", "pos"),
@@ -180,7 +199,7 @@ def plot_comparison(log_paths, eta):
         stem = Path(path).stem
         runs.append(
             {
-                "label": stem + kf_label(use_kf),
+                "label": stem + kf_label(use_kf) + mpc_label(use_mpc),
                 "dt": dt,
                 "t_com": np.arange(n_com) * dt,
                 "t_zmp": np.arange(n_zmp) * dt,

@@ -4,6 +4,7 @@ import copy
 from utils import *
 import os
 import ismpc
+import cp_controller
 import footstep_planner
 import inverse_dynamics as id
 import filter
@@ -12,7 +13,7 @@ from logger import Logger
 import argparse
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
-    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True):
+    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
@@ -20,6 +21,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.log_path = log_path
         self.autosave_every = autosave_every
         self.use_kf = use_kf
+        self.use_mpc = use_mpc
         self.params = {
             'g': 9.81,
             'h': 0.72,
@@ -35,7 +37,17 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
             # CP feedback pole
             'alpha': -3.0,
+
+            # extra poles/delay gain used only by the CPController (--no-mpc)
+            'beta': -8.0,    # ZMP pole
+            'gamma': -1.0,   # CP-integral pole
+            # 'g_p': 20.0,     # ZMP first-order-lag gain
         }
+
+        if not self.use_mpc:
+            self.params['ss_duration'] = 50
+            self.params['ds_duration'] = 30
+
         # natural frequency of the LIP model
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
 
@@ -99,12 +111,20 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             self.params
             )
 
-        # initialize MPC controller
-        self.mpc = ismpc.Ismpc(
-            self.initial, 
-            self.footstep_planner, 
-            self.params
-            )
+        # initialize controller (MPC or CP feedback). Both expose A_lip/B_lip and a
+        # solve() returning (lip_state, contact, p_cmd, xi_error_int).
+        if self.use_mpc:
+            self.mpc = ismpc.Ismpc(
+                self.initial,
+                self.footstep_planner,
+                self.params
+                )
+        else:
+            self.mpc = cp_controller.CPController(
+                self.initial,
+                self.footstep_planner,
+                self.params
+                )
 
         # initialize foot trajectory generator
         self.foot_trajectory_generator = ftg.FootTrajectoryGenerator(
@@ -201,6 +221,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
                 self.log_path,
                 time_step=self.params['world_time_step'],
                 use_kf=self.use_kf,
+                use_mpc=self.use_mpc,
                 steps=self.time + 1
             )
 
@@ -241,9 +262,16 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             zmp[1] += (contact.point[1] * contact.force[2] / force[2] + (zmp[2] - contact.point[2]) * contact.force[1] / force[2])
 
         if force[2] <= 0.1: # threshold for when we lose contact
-            zmp = np.array([0., 0., 0.]) # FIXME: this should return previous measurement
+            # hold the last valid measurement instead of jumping to the world origin
+            zmp = getattr(self, 'prev_zmp', np.zeros(3)).copy()
+            # reset the active controller's CP-error integrator (avoid wind-up across
+            # the contact loss). MPC stores it as xi_error_int, CPController as
+            # cp_error_integral; reset whichever the active controller exposes.
             if hasattr(self, 'mpc'):
-                self.mpc.xi_error_int = np.zeros(3)
+                if hasattr(self.mpc, 'xi_error_int'):
+                    self.mpc.xi_error_int = np.zeros(3)
+                if hasattr(self.mpc, 'cp_error_integral'):
+                    self.mpc.cp_error_integral = np.zeros(2)
 
         else:
             # sometimes we get contact points that dont make sense, so we clip the ZMP close to the robot
@@ -251,6 +279,8 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             zmp[0] = np.clip(zmp[0], midpoint[0] - 0.3, midpoint[0] + 0.3)
             zmp[1] = np.clip(zmp[1], midpoint[1] - 0.3, midpoint[1] + 0.3)
             zmp[2] = np.clip(zmp[2], midpoint[2] - 0.3, midpoint[2] + 0.3)
+
+        self.prev_zmp = zmp.copy()
 
         # create state dict
         return {
@@ -282,10 +312,13 @@ if __name__ == "__main__":
     parser.add_argument("--log-path", type=str, default="logs/log.npz", help="Optional path to save simulation logs as .npz.")
     parser.add_argument("--autosave-every", type=int, default=200, help="Autosave frequency in simulation steps.")
     parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
+    parser.add_argument("--no-mpc", action="store_true", help="Disable MPC and use CP feedback controller instead.")
     args = parser.parse_args()
 
     if args.no_kf:
         args.log_path = "logs/log_no-kf.npz"
+    if args.no_mpc:
+        args.log_path = "logs/log_no-mpc.npz"
 
     world = dart.simulation.World()
 
@@ -305,7 +338,7 @@ if __name__ == "__main__":
             body.setMass(1e-8)
             body.setInertia(default_inertia)
 
-    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf)
+    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc)
 
     # create world node and add it to viewer
     viewer = dart.gui.osg.Viewer()
@@ -326,5 +359,6 @@ if __name__ == "__main__":
                 args.log_path,
                 time_step=node.params['world_time_step'],
                 use_kf=node.use_kf,
+                use_mpc=node.use_mpc,
                 steps=node.time
             )
