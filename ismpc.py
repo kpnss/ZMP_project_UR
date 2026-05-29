@@ -16,8 +16,6 @@ class Ismpc:
 
     self.k_1 = params['k_1']
     self.k_2 = params['k_2']
-    self.eta = params['eta']
-
 
     # lip model matrices
     self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]]) # per aggiungere il lag g_p basta cambiare il terzo 0 del terzo vettore

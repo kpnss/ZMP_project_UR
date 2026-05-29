@@ -25,8 +25,10 @@ class KalmanFilter:
         y = z - self.H @ self.x
         self.x = self.x + K @ y
         
-        # update the estimate covariance
+        # update the estimate covariance (Joseph form: numerically stable, keeps P
+        # symmetric positive semi-definite even when K is not exactly optimal)
         I = np.eye(self.P.shape[0])
-        self.P = (I - K @ self.H) @ self.P
+        IKH = I - K @ self.H
+        self.P = IKH @ self.P @ IKH.T + K @ self.R @ K.T
         
         return self.x, self.P
