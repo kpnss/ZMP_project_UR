@@ -11,34 +11,35 @@ AXES = ("x", "y", "z")
 def load_run(path):
     data = np.load(path, allow_pickle=False)
     time_step = float(data["time_step"]) if "time_step" in data else 0.01
-    use_kf = bool(data["meta_use_kf"]) if "meta_use_kf" in data else None
-    use_mpc = bool(data["meta_use_mpc"]) if "meta_use_mpc" in data else None
-    return data, time_step, use_kf, use_mpc
+    use_kf    = bool(data["meta_use_kf"])    if "meta_use_kf"    in data else None
+    use_mpc   = bool(data["meta_use_mpc"])   if "meta_use_mpc"   in data else None
+    open_loop = bool(data["meta_open_loop"]) if "meta_open_loop" in data else False
+    return data, time_step, use_kf, use_mpc, open_loop
 
 
 def kf_label(use_kf):
-    """Return a human-readable KF tag for plot titles."""
     if use_kf is None:
         return ""
     return " [KF]" if use_kf else " [no KF]"
 
 
 def kf_suffix(use_kf):
-    """Return a file-name-safe KF suffix."""
     if use_kf is None:
         return ""
     return "_kf" if use_kf else "_no_kf"
 
 
-def mpc_label(use_mpc):
-    """Return a human-readable controller tag for plot titles."""
+def mpc_label(use_mpc, open_loop=False):
+    if open_loop:
+        return " [open-loop MPC]"
     if use_mpc is None:
         return ""
     return " [MPC]" if use_mpc else " [CP ctrl]"
 
 
-def mpc_suffix(use_mpc):
-    """Return a file-name-safe controller suffix."""
+def mpc_suffix(use_mpc, open_loop=False):
+    if open_loop:
+        return "_open_loop"
     if use_mpc is None:
         return ""
     return "_mpc" if use_mpc else "_no_mpc"
@@ -54,12 +55,9 @@ def get_series(data, batch, item, level):
 def compute_xy_limits(desired, current, xy_limits=None):
     if xy_limits is not None:
         return xy_limits
-
     all_xy = np.vstack([desired[:, :2], current[:, :2]])
     x_low, x_high = np.percentile(all_xy[:, 0], [1, 99])
     y_low, y_high = np.percentile(all_xy[:, 1], [1, 99])
-
-    # Add a small margin so trajectories are not touching plot borders.
     x_margin = max(1e-3, 0.05 * (x_high - x_low))
     y_margin = max(1e-3, 0.05 * (y_high - y_low))
     return (x_low - x_margin, x_high + x_margin, y_low - y_margin, y_high + y_margin)
@@ -69,15 +67,10 @@ def add_position_plots_xy(ax, desired, current, title, label_prefix, xy_limits=N
     t_des = np.arange(len(desired))
     t_cur = np.arange(len(current))
 
-    ax[0].plot(desired[:, 0], desired[:, 1], "-", alpha=0.7, label=f"{label_prefix} desired xy")
+    ax[0].plot(desired[:, 0], desired[:, 1], "-",  alpha=0.7, label=f"{label_prefix} desired xy")
     ax[0].plot(current[:, 0], current[:, 1], "--", alpha=0.7, label=f"{label_prefix} current xy")
-
-    # Overlay all timestamps as points on the same x-y plane.
-    # Labels start with "_" so matplotlib excludes them from the legend
-    # (colourmap scatter entries have no clean legend symbol).
     ax[0].scatter(desired[:, 0], desired[:, 1], c=t_des, cmap="Blues", s=10, alpha=0.5, label="_nolegend_")
     ax[0].scatter(current[:, 0], current[:, 1], c=t_cur, cmap="Reds",  s=10, alpha=0.5, label="_nolegend_")
-
     ax[0].set_xlabel(f"{title} x [m]")
     ax[0].set_ylabel(f"{title} y [m]")
     ax[0].axis("equal")
@@ -86,7 +79,7 @@ def add_position_plots_xy(ax, desired, current, title, label_prefix, xy_limits=N
     ax[0].set_ylim(y_min, y_max)
     ax[0].grid(True, alpha=0.3)
 
-    ax[1].plot(t_des, desired[:, 2], "-", label=f"{label_prefix} desired z")
+    ax[1].plot(t_des, desired[:, 2], "-",  label=f"{label_prefix} desired z")
     ax[1].plot(t_cur, current[:, 2], "--", label=f"{label_prefix} current z")
     ax[1].set_xlim(0, max(len(desired), len(current)) - 1)
     ax[1].set_ylabel(f"{title} z [m]")
@@ -113,7 +106,7 @@ def compute_xi(com_pos, com_vel, eta):
 
 
 def plot_single_run(log_path, run_label, eta, xy_limits=None):
-    data, dt, use_kf, use_mpc = load_run(log_path)
+    data, dt, use_kf, use_mpc, open_loop = load_run(log_path)
     d_com, c_com, n_com = truncate_pair(
         get_series(data, "desired", "com", "pos"),
         get_series(data, "current", "com", "pos"),
@@ -131,13 +124,13 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
 
     t_com = np.arange(n_com) * dt
     t_zmp = np.arange(n_zmp) * dt
-    t_xi = np.arange(n_xi) * dt
+    t_xi  = np.arange(n_xi)  * dt
 
-    stem = Path(log_path).stem
-    kf_lbl = kf_label(use_kf)
-    kf_sfx = kf_suffix(use_kf)
-    mpc_lbl = mpc_label(use_mpc)
-    mpc_sfx = mpc_suffix(use_mpc)
+    stem    = Path(log_path).stem
+    kf_lbl  = kf_label(use_kf)
+    kf_sfx  = kf_suffix(use_kf)
+    mpc_lbl = mpc_label(use_mpc, open_loop)
+    mpc_sfx = mpc_suffix(use_mpc, open_loop)
     tag = f"{kf_lbl}{mpc_lbl}"
     sfx = f"{kf_sfx}{mpc_sfx}"
 
@@ -181,7 +174,7 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
 def plot_comparison(log_paths, eta):
     runs = []
     for path in log_paths:
-        data, dt, use_kf, use_mpc = load_run(path)
+        data, dt, use_kf, use_mpc, open_loop = load_run(path)
         d_com, c_com, n_com = truncate_pair(
             get_series(data, "desired", "com", "pos"),
             get_series(data, "current", "com", "pos"),
@@ -197,18 +190,16 @@ def plot_comparison(log_paths, eta):
         d_xi = compute_xi(d_com[:n_xi], d_com_vel[:n_xi], eta)
         c_xi = compute_xi(c_com[:n_xi], c_com_vel[:n_xi], eta)
         stem = Path(path).stem
-        runs.append(
-            {
-                "label": stem + kf_label(use_kf) + mpc_label(use_mpc),
-                "dt": dt,
-                "t_com": np.arange(n_com) * dt,
-                "t_zmp": np.arange(n_zmp) * dt,
-                "t_xi": np.arange(n_xi) * dt,
-                "com_err": d_com - c_com,
-                "zmp_err": d_zmp - c_zmp,
-                "xi_err": d_xi - c_xi,
-            }
-        )
+        runs.append({
+            "label": stem + kf_label(use_kf) + mpc_label(use_mpc, open_loop),
+            "dt": dt,
+            "t_com": np.arange(n_com) * dt,
+            "t_zmp": np.arange(n_zmp) * dt,
+            "t_xi":  np.arange(n_xi)  * dt,
+            "com_err": d_com - c_com,
+            "zmp_err": d_zmp - c_zmp,
+            "xi_err":  d_xi  - c_xi,
+        })
 
     fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     fig.suptitle("COM tracking error comparison")
@@ -295,9 +286,8 @@ def main():
     else:
         figs_with_names = []
         for log in args.logs:
-            figs_with_names.extend(plot_single_run(log, Path(log).stem, eta, xy_limits=xy_limits))
+            figs_with_names.extend(plot_single_run(log, Path(log).stem, eta, xy_limits))
 
-    # save figures to files instead of showing them interactively
     os.makedirs("logs", exist_ok=True)
     for fig, name in figs_with_names:
         out_path = os.path.join("logs", name)

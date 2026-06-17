@@ -7,13 +7,14 @@ import ismpc
 import cp_controller
 import footstep_planner
 import inverse_dynamics as id
+import mpc_open
 import filter
 import foot_trajectory_generator as ftg
 from logger import Logger
 import argparse
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
-    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True):
+    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True, open_loop=False):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
@@ -22,6 +23,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.autosave_every = autosave_every
         self.use_kf = use_kf
         self.use_mpc = use_mpc
+        self.open_loop = open_loop
         self.params = {
             'g': 9.81,
             'h': 0.72,
@@ -113,18 +115,12 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # initialize controller (MPC or CP feedback). Both expose A_lip/B_lip and a
         # solve() returning (lip_state, contact, p_cmd, xi_error_int).
-        if self.use_mpc:
-            self.mpc = ismpc.Ismpc(
-                self.initial,
-                self.footstep_planner,
-                self.params
-                )
+        if self.open_loop:
+            self.mpc = mpc_open.MpcOpen(self.initial, self.footstep_planner, self.params)
+        elif self.use_mpc:
+            self.mpc = ismpc.Ismpc(self.initial, self.footstep_planner, self.params)
         else:
-            self.mpc = cp_controller.CPController(
-                self.initial,
-                self.footstep_planner,
-                self.params
-                )
+            self.mpc = cp_controller.CPController(self.initial, self.footstep_planner, self.params)
 
         # initialize foot trajectory generator
         self.foot_trajectory_generator = ftg.FootTrajectoryGenerator(
@@ -313,12 +309,15 @@ if __name__ == "__main__":
     parser.add_argument("--autosave-every", type=int, default=200, help="Autosave frequency in simulation steps.")
     parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
     parser.add_argument("--no-mpc", action="store_true", help="Disable MPC and use CP feedback controller instead.")
+    parser.add_argument("--open-loop", action="store_true", help="Use open-loop MPC (no feedback from real robot state).")
     args = parser.parse_args()
 
     if args.no_kf:
         args.log_path = "logs/log_no-kf.npz"
     if args.no_mpc:
         args.log_path = "logs/log_no-mpc.npz"
+    if args.open_loop:
+        args.log_path = "logs/log_open-loop.npz"
 
     world = dart.simulation.World()
 
@@ -338,7 +337,7 @@ if __name__ == "__main__":
             body.setMass(1e-8)
             body.setInertia(default_inertia)
 
-    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc)
+    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, open_loop=args.open_loop)
 
     # create world node and add it to viewer
     viewer = dart.gui.osg.Viewer()
@@ -360,5 +359,6 @@ if __name__ == "__main__":
                 time_step=node.params['world_time_step'],
                 use_kf=node.use_kf,
                 use_mpc=node.use_mpc,
+                open_loop=node.open_loop,
                 steps=node.time
             )
