@@ -218,6 +218,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
                 time_step=self.params['world_time_step'],
                 use_kf=self.use_kf,
                 use_mpc=self.use_mpc,
+                open_loop=self.open_loop,  
                 steps=self.time + 1
             )
 
@@ -312,12 +313,16 @@ if __name__ == "__main__":
     parser.add_argument("--open-loop", action="store_true", help="Use open-loop MPC (no feedback from real robot state).")
     args = parser.parse_args()
 
+    suffix = ""
     if args.no_kf:
-        args.log_path = "logs/log_no-kf.npz"
+        suffix += "_no-kf"
     if args.no_mpc:
-        args.log_path = "logs/log_no-mpc.npz"
+        suffix += "_no-mpc"
     if args.open_loop:
-        args.log_path = "logs/log_open-loop.npz"
+        suffix += "_open-loop"
+
+    if suffix:
+        args.log_path = f"logs/log{suffix}.npz"
 
     world = dart.simulation.World()
 
