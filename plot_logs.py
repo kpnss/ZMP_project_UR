@@ -52,39 +52,16 @@ def get_series(data, batch, item, level):
     return data[key]
 
 
-def compute_xy_limits(desired, current, xy_limits=None):
-    if xy_limits is not None:
-        return xy_limits
-    all_xy = np.vstack([desired[:, :2], current[:, :2]])
-    x_low, x_high = np.percentile(all_xy[:, 0], [1, 99])
-    y_low, y_high = np.percentile(all_xy[:, 1], [1, 99])
-    x_margin = max(1e-3, 0.05 * (x_high - x_low))
-    y_margin = max(1e-3, 0.05 * (y_high - y_low))
-    return (x_low - x_margin, x_high + x_margin, y_low - y_margin, y_high + y_margin)
-
-
-def add_position_plots_xy(ax, desired, current, title, label_prefix, xy_limits=None):
+def add_position_plots(ax, desired, current, title, label_prefix):
     t_des = np.arange(len(desired))
     t_cur = np.arange(len(current))
 
-    ax[0].plot(desired[:, 0], desired[:, 1], "-",  alpha=0.7, label=f"{label_prefix} desired xy")
-    ax[0].plot(current[:, 0], current[:, 1], "--", alpha=0.7, label=f"{label_prefix} current xy")
-    ax[0].scatter(desired[:, 0], desired[:, 1], c=t_des, cmap="Blues", s=10, alpha=0.5, label="_nolegend_")
-    ax[0].scatter(current[:, 0], current[:, 1], c=t_cur, cmap="Reds",  s=10, alpha=0.5, label="_nolegend_")
-    ax[0].set_xlabel(f"{title} x [m]")
-    ax[0].set_ylabel(f"{title} y [m]")
-    ax[0].axis("equal")
-    x_min, x_max, y_min, y_max = compute_xy_limits(desired, current, xy_limits)
-    ax[0].set_xlim(x_min, x_max)
-    ax[0].set_ylim(y_min, y_max)
-    ax[0].grid(True, alpha=0.3)
-
-    ax[1].plot(t_des, desired[:, 2], "-",  label=f"{label_prefix} desired z")
-    ax[1].plot(t_cur, current[:, 2], "--", label=f"{label_prefix} current z")
-    ax[1].set_xlim(0, max(len(desired), len(current)) - 1)
-    ax[1].set_ylabel(f"{title} z [m]")
-    ax[1].set_xlabel("sample")
-    ax[1].grid(True, alpha=0.3)
+    for dim, axis_name in enumerate(AXES):
+        ax[dim].plot(t_des, desired[:, dim], "-",  label=f"{label_prefix} desired {axis_name}")
+        ax[dim].plot(t_cur, current[:, dim], "--", label=f"{label_prefix} current {axis_name}")
+        ax[dim].set_ylabel(f"{title} {axis_name} [m]")
+        ax[dim].grid(True, alpha=0.3)
+    ax[-1].set_xlabel("sample")
 
 
 def add_error_plots(ax, t, desired, current, title, label_prefix):
@@ -105,7 +82,7 @@ def compute_xi(com_pos, com_vel, eta):
     return com_pos + com_vel / eta
 
 
-def plot_single_run(log_path, run_label, eta, xy_limits=None):
+def plot_single_run(log_path, run_label, eta):
     data, dt, use_kf, use_mpc, open_loop = load_run(log_path)
     d_com, c_com, n_com = truncate_pair(
         get_series(data, "desired", "com", "pos"),
@@ -134,19 +111,19 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
     tag = f"{kf_lbl}{mpc_lbl}"
     sfx = f"{kf_sfx}{mpc_sfx}"
 
-    fig1, ax1 = plt.subplots(2, 1, figsize=(10, 7))
+    fig1, ax1 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     fig1.suptitle(f"COM trajectories{tag} - {run_label}")
-    add_position_plots_xy(ax1, d_com, c_com, "COM", run_label, xy_limits=xy_limits)
+    add_position_plots(ax1, d_com, c_com, "COM", run_label)
     ax1[0].legend(loc="upper right", fontsize=8)
 
-    fig2, ax2 = plt.subplots(2, 1, figsize=(10, 7))
+    fig2, ax2 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     fig2.suptitle(f"ZMP trajectories{tag} - {run_label}")
-    add_position_plots_xy(ax2, d_zmp, c_zmp, "ZMP", run_label, xy_limits=xy_limits)
+    add_position_plots(ax2, d_zmp, c_zmp, "ZMP", run_label)
     ax2[0].legend(loc="upper right", fontsize=8)
 
-    fig3, ax3 = plt.subplots(2, 1, figsize=(10, 7))
+    fig3, ax3 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     fig3.suptitle(f"Capture point trajectories{tag} - {run_label}")
-    add_position_plots_xy(ax3, d_xi, c_xi, "CP", run_label, xy_limits=xy_limits)
+    add_position_plots(ax3, d_xi, c_xi, "CP", run_label)
     ax3[0].legend(loc="upper right", fontsize=8)
 
     fig4, ax4 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
@@ -155,11 +132,6 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
     add_error_plots(ax4, t_zmp, d_zmp, c_zmp, "ZMP", run_label)
     ax4[0].legend(loc="upper right", fontsize=8)
 
-    fig5, ax5 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    fig5.suptitle(f"Capture point error (desired-current){tag} - {run_label}")
-    add_error_plots(ax5, t_xi, d_xi, c_xi, "CP", run_label)
-    ax5[0].legend(loc="upper right", fontsize=8)
-
     plt.tight_layout()
 
     return [
@@ -167,7 +139,6 @@ def plot_single_run(log_path, run_label, eta, xy_limits=None):
         (fig2, f"plot{sfx}_{stem}_zmp_trajectories.png"),
         (fig3, f"plot{sfx}_{stem}_capture_point_trajectories.png"),
         (fig4, f"plot{sfx}_{stem}_tracking_errors.png"),
-        (fig5, f"plot{sfx}_{stem}_capture_point_errors.png"),
     ]
 
 
@@ -242,18 +213,11 @@ def plot_comparison(log_paths, eta):
 
 def main():
     parser = argparse.ArgumentParser(description="Plot simulation logs exported by Logger.save_npz.")
-    parser.add_argument("logs", nargs="+", help="One or more .npz log files.")
+    parser.add_argument("logs", nargs="*", help="One or more .npz log files (default: latest in logs/).")
     parser.add_argument(
         "--compare",
         action="store_true",
         help="Compare tracking errors across multiple runs.",
-    )
-    parser.add_argument(
-        "--xy-limits",
-        nargs=4,
-        type=float,
-        metavar=("X_MIN", "X_MAX", "Y_MIN", "Y_MAX"),
-        help="Manual limits for x-y trajectory plots.",
     )
     parser.add_argument(
         "--eta",
@@ -275,24 +239,34 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.logs:
+        candidates = sorted(Path("logs").glob("*.npz"), key=lambda p: p.stat().st_ctime)
+        if not candidates:
+            raise FileNotFoundError("No .npz files found in logs/")
+        args.logs = [str(candidates[-1])]
+        print(f"Auto-selected: {args.logs[0]}")
+
     if args.compare and len(args.logs) < 2:
         raise ValueError("--compare requires at least two log files.")
 
-    xy_limits = tuple(args.xy_limits) if args.xy_limits is not None else None
     eta = args.eta if args.eta is not None else np.sqrt(args.gravity / args.lip_height)
 
     if args.compare:
-        figs_with_names = plot_comparison(args.logs, eta)
+        out_dir = os.path.join("logs", "comparison")
+        os.makedirs(out_dir, exist_ok=True)
+        for fig, name in plot_comparison(args.logs, eta):
+            out_path = os.path.join(out_dir, name)
+            fig.savefig(out_path, dpi=300)
+            print(f"Saved: {out_path}")
     else:
-        figs_with_names = []
         for log in args.logs:
-            figs_with_names.extend(plot_single_run(log, Path(log).stem, eta, xy_limits))
-
-    os.makedirs("logs", exist_ok=True)
-    for fig, name in figs_with_names:
-        out_path = os.path.join("logs", name)
-        fig.savefig(out_path, dpi=300)
-        print(f"Saved: {out_path}")
+            stem = Path(log).stem
+            out_dir = os.path.join("logs", stem)
+            os.makedirs(out_dir, exist_ok=True)
+            for fig, name in plot_single_run(log, stem, eta):
+                out_path = os.path.join(out_dir, name)
+                fig.savefig(out_path, dpi=300)
+                print(f"Saved: {out_path}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 import numpy as np
 import dartpy as dart
 import copy
+from plot_logs import plot_single_run
+from pathlib import Path
 from utils import *
 import os
 import ismpc
@@ -311,6 +313,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
     parser.add_argument("--no-mpc", action="store_true", help="Disable MPC and use CP feedback controller instead.")
     parser.add_argument("--open-loop", action="store_true", help="Use open-loop MPC (no feedback from real robot state).")
+    parser.add_argument("--no-plot", action="store_true", help="Skip plotting after saving the log.")
     args = parser.parse_args()
 
     suffix = ""
@@ -367,3 +370,12 @@ if __name__ == "__main__":
                 open_loop=node.open_loop,
                 steps=node.time
             )
+            if not args.no_plot:
+                stem = Path(args.log_path).stem
+                out_dir = os.path.join("logs", stem)
+                os.makedirs(out_dir, exist_ok=True)
+                print(f"Plotting logs to {out_dir}...")
+                for fig, name in plot_single_run(args.log_path, stem, node.params['eta']):
+                    out_path = os.path.join(out_dir, name)
+                    fig.savefig(out_path, dpi=300)
+                    print(f"Saved: {out_path}")
