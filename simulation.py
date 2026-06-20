@@ -1,6 +1,8 @@
 import numpy as np
 import dartpy as dart
 import copy
+from pathlib import Path
+from plot_logs import plot_single_run
 from utils import *
 import os
 import argparse
@@ -306,6 +308,7 @@ if __name__ == "__main__":
     parser.add_argument("--autosave-every", type=int, default=200, help="Autosave frequency in simulation steps.")
     parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
     parser.add_argument("--no-mpc", action="store_true", help="Disable MPC and use CP feedback controller instead.")
+    parser.add_argument("--no-plot", action="store_true", help="Disable automatic plotting of logs after simulation.")
     args = parser.parse_args()
 
     world = dart.simulation.World()
@@ -350,3 +353,12 @@ if __name__ == "__main__":
                 use_mpc=node.use_mpc,
                 steps=node.time
             )
+            if not args.no_plot:
+                stem = Path(args.log_path).stem
+                out_dir = os.path.join("logs", stem)
+                os.makedirs(out_dir, exist_ok=True)
+                print(f"Plotting logs to {out_dir}...")
+                for fig, name in plot_single_run(args.log_path, stem, node.params['eta']):
+                    out_path = os.path.join(out_dir, name)
+                    fig.savefig(out_path, dpi=300)
+                    print(f"Saved: {out_path}")

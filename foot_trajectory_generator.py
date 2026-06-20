@@ -33,31 +33,15 @@ class FootTrajectoryGenerator:
             }
         }
 
-    # if we are past the last planned step, keep the final poses
-    if step_index >= len(self.plan) - 1:
-        support_pose = np.hstack((
-            self.plan[step_index]['ang'],
-            self.plan[step_index]['pos']
-        ))
-        prev_index = max(step_index - 1, 0)
-        swing_pose = np.hstack((
-            self.plan[prev_index]['ang'],
-            self.plan[prev_index]['pos']
-        ))
-        zero_vel = np.zeros(6)
-        zero_acc = np.zeros(6)
-        return {
-            support_foot: {
-                'pos': support_pose,
-                'vel': zero_vel,
-                'acc': zero_acc
-            },
-            swing_foot: {
-                'pos': swing_pose,
-                'vel': zero_vel,
-                'acc': zero_acc
-            }
-        }
+    next_index = min(step_index + 1, len(self.plan) - 1)
+
+    # closing position for last step: mirror support foot around unicycle center
+    if step_index == len(self.plan) - 1:
+        theta = self.plan[step_index]['ang'][2]
+        d = 0.1 if support_foot == 'lfoot' else -0.1
+        displ = np.array([-np.sin(theta) * d, np.cos(theta) * d, 0.])
+        closing_pos = self.plan[step_index]['pos'] - 2.0 * displ
+        closing_ang = self.plan[step_index]['ang']
 
     # if double support, return planned foot poses with zero velocities and accelerations
     if phase == 'ds':
@@ -65,10 +49,13 @@ class FootTrajectoryGenerator:
             self.plan[step_index]['ang'],
             self.plan[step_index]['pos']
         ))
-        swing_pose = np.hstack((
-            self.plan[step_index + 1]['ang'],
-            self.plan[step_index + 1]['pos']
-        ))
+        if step_index == len(self.plan) - 1:
+            swing_pose = np.hstack((closing_ang, closing_pos))
+        else:
+            swing_pose = np.hstack((
+                self.plan[next_index]['ang'],
+                self.plan[next_index]['pos']
+            ))
         zero_vel = np.zeros(6)
         zero_acc = np.zeros(6)
         return {
@@ -85,10 +72,14 @@ class FootTrajectoryGenerator:
         }
     
     # get positions and angles for cubic interpolation
-    start_pos  = self.plan[step_index - 1]['pos']
-    target_pos = self.plan[step_index + 1]['pos']
-    start_ang  = self.plan[step_index - 1]['ang']
-    target_ang = self.plan[step_index + 1]['ang']
+    start_pos = self.plan[step_index - 1]['pos']
+    start_ang = self.plan[step_index - 1]['ang']
+    if step_index == len(self.plan) - 1:
+        target_pos = closing_pos
+        target_ang = closing_ang
+    else:
+        target_pos = self.plan[next_index]['pos']
+        target_ang = self.plan[next_index]['ang']
 
     # time variables
     t = time_in_step
