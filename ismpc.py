@@ -16,6 +16,7 @@ class Ismpc:
 
     self.k_1 = params['k_1']
     self.k_2 = params['k_2']
+    self.use_cp = params.get('use_cp', True)
 
     # lip model matrices
     self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]]) # per aggiungere il lag g_p basta cambiare il terzo 0 del terzo vettore
@@ -100,33 +101,37 @@ class Ismpc:
     self.opt.set_value(self.zmp_z_mid_param, mc_z)
 
     sol = self.opt.solve()
-    self.x_pred = sol.value(self.X[:,1]) 
+    self.x_pred = sol.value(self.X[:,1])
     self.u = sol.value(self.U[:,0])
 
-    p_meas  = current['zmp']['pos']
-    xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
+    if self.use_cp:
+        p_meas  = current['zmp']['pos']
+        xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
 
-    # Both xi_ref and p_ref must come from the same time instant (Morisawa eq. 14-15):
-    # the reference at the *current* time t is the previous solve's one-step prediction.
-    # On the first call there is no stored prediction, so corrections are zero.
-    if self._xi_ref_prev is not None:
-        xi_ref = self.compute_cp(
-            self._xi_ref_prev[[0, 3, 6]],
-            self._xi_ref_prev[[1, 4, 7]]
+        # Both xi_ref and p_ref must come from the same time instant (Morisawa eq. 14-15):
+        # the reference at the *current* time t is the previous solve's one-step prediction.
+        # On the first call there is no stored prediction, so corrections are zero.
+        if self._xi_ref_prev is not None:
+            xi_ref = self.compute_cp(
+                self._xi_ref_prev[[0, 3, 6]],
+                self._xi_ref_prev[[1, 4, 7]]
+            )
+            p_ref = self._xi_ref_prev[[2, 5, 8]]
+        else:
+            xi_ref = xi_meas
+            p_ref  = sol.value(self.X[[2, 5, 8], 1])
+
+        p_cmd = (
+            p_ref
+            - self.k_1 * (xi_meas - xi_ref)
+            - self.k_2 * (p_meas  - p_ref)
         )
-        p_ref = self._xi_ref_prev[[2, 5, 8]]
+
+        # Save this step's prediction so the next call has the reference for time t+δ
+        self._xi_ref_prev = self.x_pred.copy()
     else:
-        xi_ref = xi_meas
-        p_ref  = sol.value(self.X[[2, 5, 8], 1])
-
-    p_cmd = (
-        p_ref
-        - self.k_1 * (xi_meas - xi_ref)
-        - self.k_2 * (p_meas  - p_ref)
-    )
-
-    # Save this step's prediction so the next call has the reference for time t+δ
-    self._xi_ref_prev = self.x_pred.copy()
+        # Plain MPC: command the ZMP planned by the MPC, no capture-point feedback.
+        p_cmd = sol.value(self.X[[2, 5, 8], 1])
 
     self.opt.set_initial(self.U, sol.value(self.U))
     self.opt.set_initial(self.X, sol.value(self.X))

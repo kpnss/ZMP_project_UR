@@ -5,6 +5,7 @@ class CPController:
         self.params = params
         self.delta = params['world_time_step']
         self.eta = params['eta']
+        self.use_cp = params.get('use_cp', True)
         self.footstep_planner = footstep_planner
         
         # Closed-loop poles for the CP-error + CP-integral dynamics (both < 0):
@@ -82,12 +83,16 @@ class CPController:
 
         # Comando stabilizzatore
         p_cmd = np.zeros(3)
-        p_cmd[0:2] = (
-            p_ref[0:2] 
-            - self.k_1 * cp_error 
-            - self.k_2 * (p_meas[0:2] - p_ref[0:2]) 
-            - self.k_I * self.cp_error_integral
-        )
+        if self.use_cp:
+            p_cmd[0:2] = (
+                p_ref[0:2]
+                - self.k_1 * cp_error
+                - self.k_2 * (p_meas[0:2] - p_ref[0:2])
+                # - self.k_I * self.cp_error_integral
+            )
+        else:
+            # Plain ZMP tracking: follow the planned ZMP trajectory, no CP feedback.
+            p_cmd[0:2] = p_ref[0:2]
         
         # Keep the commanded ZMP inside the support polygon (Balance_control.pdf,
         # Sec. III-B). Single support: within the support foot (+-foot_size/2).
