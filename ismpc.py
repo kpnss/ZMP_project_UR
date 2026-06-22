@@ -18,7 +18,7 @@ class Ismpc:
     self.k_2 = params['k_2']
     self.k_i = params['k_i']
     self.alpha = params['alpha']
-
+    self.use_cp = params.get('use_cp', True)
 
     # lip model matrices
     self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]]) # per aggiungere il lag g_p basta cambiare il terzo 0 del terzo vettore
@@ -113,26 +113,30 @@ class Ismpc:
 
     self.u = sol.value(self.U[:,0])
 
-    p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD prodotta da MPC
+    if self.use_cp:
+      p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD prodotta da MPC
 
-    p_meas  = current['zmp']['pos']
+      p_meas  = current['zmp']['pos']
 
-    dt = self.params['world_time_step']
-    xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
-    x_next = sol.value(self.X[:, 1])
-    if self._xi_ref_prev is not None:
-      xi_ref = self.compute_cp(self._xi_ref_prev[[0, 3, 6]], self._xi_ref_prev[[1, 4, 7]])
+      dt = self.params['world_time_step']
+      xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
+      x_next = sol.value(self.X[:, 1])
+      if self._xi_ref_prev is not None:
+        xi_ref = self.compute_cp(self._xi_ref_prev[[0, 3, 6]], self._xi_ref_prev[[1, 4, 7]])
+      else:
+        xi_ref = xi_meas
+      self._xi_ref_prev = x_next
+      self.xi_error_int += (xi_meas - xi_ref) * dt
+
+      p_cmd = (
+          p_ref
+          - self.k_1 * (xi_meas - xi_ref)
+          - self.k_2 * (p_meas - p_ref)
+          - self.k_i * self.xi_error_int
+      )
     else:
-      xi_ref = xi_meas
-    self._xi_ref_prev = x_next
-    self.xi_error_int += (xi_meas - xi_ref) * dt
-
-    p_cmd = (
-        p_ref
-        - self.k_1 * (xi_meas - xi_ref)
-        - self.k_2 * (p_meas - p_ref)
-        - self.k_i * self.xi_error_int
-    )
+      # Plain MPC: command the ZMP planned by the MPC, no capture-point feedback.
+      p_cmd = sol.value(self.X[[2, 5, 8], 1])
 
     self.opt.set_initial(self.U, sol.value(self.U))
     self.opt.set_initial(self.X, sol.value(self.X))

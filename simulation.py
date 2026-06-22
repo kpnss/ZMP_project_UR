@@ -1,7 +1,7 @@
 import numpy as np
 import dartpy as dart
 import copy
-from plot_logs import plot_single_run
+from plot_logs import plot_single_run, kf_suffix, mpc_suffix, cp_suffix
 from pathlib import Path
 from utils import *
 import os
@@ -16,7 +16,7 @@ from logger import Logger
 import argparse
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
-    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True, open_loop=False):
+    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True, use_cp=True, open_loop=False):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
@@ -26,6 +26,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.use_kf = use_kf
         self.use_mpc = use_mpc
         self.open_loop = open_loop
+        self.use_cp = use_cp
         self.params = {
             'g': 9.81,
             'h': 0.72,
@@ -46,6 +47,10 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'beta': -8.0,    # ZMP pole
             'gamma': -1.0,   # CP-integral pole
             # 'g_p': 20.0,     # ZMP first-order-lag gain
+
+            # Enable the capture-point feedback correction. When False the
+            # controllers run feedforward only (plain MPC / plain ZMP tracking).
+            'use_cp': use_cp,
         }
 
         if not self.use_mpc:
@@ -220,7 +225,8 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
                 time_step=self.params['world_time_step'],
                 use_kf=self.use_kf,
                 use_mpc=self.use_mpc,
-                open_loop=self.open_loop,  
+                open_loop=self.open_loop,
+                use_cp=self.use_cp,
                 steps=self.time + 1
             )
 
@@ -303,29 +309,26 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
                       'acc': np.zeros(self.params['dof'])},
             'zmp'  : {'pos': zmp,
                       'vel': np.zeros(3),
-                      'acc': np.zeros(3)}
+                      'acc': np.zeros(3)},
+            # ground reaction force (sum over valid contacts); z is the vertical
+            # reaction force measured in Balance_control.pdf Fig. 7(d).
+            'grf'  : {'force': force.copy()}
         }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run HRP-4 simulation with optional log export.")
-    parser.add_argument("--log-path", type=str, default="logs/log.npz", help="Optional path to save simulation logs as .npz.")
+    parser.add_argument("--log-path", type=str, default=None, help="Path to save simulation logs as .npz (default: logs/log<suffixes>.npz built from the run config).")
     parser.add_argument("--autosave-every", type=int, default=200, help="Autosave frequency in simulation steps.")
     parser.add_argument("--no-kf", action="store_true", help="Disable Kalman filter state update.")
     parser.add_argument("--no-mpc", action="store_true", help="Disable MPC and use CP feedback controller instead.")
     parser.add_argument("--open-loop", action="store_true", help="Use open-loop MPC (no feedback from real robot state).")
+    parser.add_argument("--no-cp", action="store_true", help="Disable the capture-point feedback (plain MPC / plain ZMP tracking).")
     parser.add_argument("--no-plot", action="store_true", help="Skip plotting after saving the log.")
     args = parser.parse_args()
 
-    suffix = ""
-    if args.no_kf:
-        suffix += "_no-kf"
-    if args.no_mpc:
-        suffix += "_no-mpc"
-    if args.open_loop:
-        suffix += "_open-loop"
+    suffix = f"{kf_suffix(not args.no_kf)}{mpc_suffix(not args.no_mpc)}{cp_suffix(not args.no_cp)}"
 
-    if suffix:
-        args.log_path = f"logs/log{suffix}.npz"
+    args.log_path = f"logs/log{suffix}.npz"
 
     world = dart.simulation.World()
 
@@ -345,7 +348,7 @@ if __name__ == "__main__":
             body.setMass(1e-8)
             body.setInertia(default_inertia)
 
-    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, open_loop=args.open_loop)
+    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, use_cp=not args.no_cp, open_loop=args.open_loop)
 
     # create world node and add it to viewer
     viewer = dart.gui.osg.Viewer()
@@ -368,6 +371,7 @@ if __name__ == "__main__":
                 use_kf=node.use_kf,
                 use_mpc=node.use_mpc,
                 open_loop=node.open_loop,
+                use_cp=node.use_cp,
                 steps=node.time
             )
             if not args.no_plot:

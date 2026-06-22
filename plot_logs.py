@@ -3,9 +3,12 @@ import os
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 
 AXES = ("x", "y", "z")
+# waist attitude angles measured in Balance_control.pdf Fig. 7(a): roll (x), pitch (y)
+ATTITUDE_ANGLES = ("roll", "pitch")
 
 
 def load_run(path):
@@ -13,8 +16,9 @@ def load_run(path):
     time_step = float(data["time_step"]) if "time_step" in data else 0.01
     use_kf    = bool(data["meta_use_kf"])    if "meta_use_kf"    in data else None
     use_mpc   = bool(data["meta_use_mpc"])   if "meta_use_mpc"   in data else None
+    use_cp    = bool(data["meta_use_cp"])    if "meta_use_cp"    in data else None
     open_loop = bool(data["meta_open_loop"]) if "meta_open_loop" in data else False
-    return data, time_step, use_kf, use_mpc, open_loop
+    return data, time_step, use_kf, use_mpc, use_cp, open_loop
 
 
 def kf_label(use_kf):
@@ -43,6 +47,28 @@ def mpc_suffix(use_mpc, open_loop=False):
     if use_mpc is None:
         return ""
     return "_mpc" if use_mpc else "_no_mpc"
+
+
+def cp_label(use_cp):
+    if use_cp is None:
+        return ""
+    return " [CP fb]" if use_cp else " [no CP fb]"
+
+
+def cp_suffix(use_cp):
+    if use_cp is None:
+        return ""
+    return "_cp" if use_cp else "_no_cp"
+
+
+def rotvec_to_attitude_deg(rotvec):
+    # (N, 3) rotation vectors -> roll, pitch (deg), the waist attitude of Fig. 7(a)
+    euler = R.from_rotvec(np.asarray(rotvec)).as_euler("xyz", degrees=True)
+    return euler[:, 0:2]
+
+
+def rms(values):
+    return float(np.sqrt(np.mean(np.square(values))))
 
 
 def get_series(data, batch, item, level):
@@ -82,8 +108,20 @@ def compute_xi(com_pos, com_vel, eta):
     return com_pos + com_vel / eta
 
 
+def add_attitude_plots(ax, t, desired, current, label_prefix):
+    d_att = rotvec_to_attitude_deg(desired)
+    c_att = rotvec_to_attitude_deg(current)
+    for dim, angle in enumerate(ATTITUDE_ANGLES):
+        err_rms = rms(d_att[:, dim] - c_att[:, dim])
+        ax[dim].plot(t, d_att[:, dim], "-",  label=f"{label_prefix} desired {angle}")
+        ax[dim].plot(t, c_att[:, dim], "--", label=f"{label_prefix} current {angle} (RMS err {err_rms:.3f} deg)")
+        ax[dim].set_ylabel(f"waist {angle} [deg]")
+        ax[dim].grid(True, alpha=0.3)
+    ax[-1].set_xlabel("time [s]")
+
+
 def plot_single_run(log_path, run_label, eta):
-    data, dt, use_kf, use_mpc, open_loop = load_run(log_path)
+    data, dt, use_kf, use_mpc, use_cp, open_loop = load_run(log_path)
     d_com, c_com, n_com = truncate_pair(
         get_series(data, "desired", "com", "pos"),
         get_series(data, "current", "com", "pos"),
@@ -108,8 +146,8 @@ def plot_single_run(log_path, run_label, eta):
     kf_sfx  = kf_suffix(use_kf)
     mpc_lbl = mpc_label(use_mpc, open_loop)
     mpc_sfx = mpc_suffix(use_mpc, open_loop)
-    tag = f"{kf_lbl}{mpc_lbl}"
-    sfx = f"{kf_sfx}{mpc_sfx}"
+    tag = f"{kf_lbl}{mpc_lbl}{cp_label(use_cp)}"
+    sfx = f"{kf_sfx}{mpc_sfx}{cp_suffix(use_cp)}"
 
     fig1, ax1 = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     fig1.suptitle(f"COM trajectories{tag} - {run_label}")
@@ -132,20 +170,51 @@ def plot_single_run(log_path, run_label, eta):
     add_error_plots(ax4, t_zmp, d_zmp, c_zmp, "ZMP", run_label)
     ax4[0].legend(loc="upper right", fontsize=8)
 
-    plt.tight_layout()
-
-    return [
+    figures = [
         (fig1, f"plot{sfx}_{stem}_com_trajectories.png"),
         (fig2, f"plot{sfx}_{stem}_zmp_trajectories.png"),
         (fig3, f"plot{sfx}_{stem}_capture_point_trajectories.png"),
         (fig4, f"plot{sfx}_{stem}_tracking_errors.png"),
     ]
 
+    # waist attitude (Balance_control.pdf Fig. 7(a))
+    if "current_base_pos" in data:
+        d_base, c_base, n_base = truncate_pair(
+            get_series(data, "desired", "base", "pos"),
+            get_series(data, "current", "base", "pos"),
+        )
+        t_base = np.arange(n_base) * dt
+        fig5, ax5 = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+        fig5.suptitle(f"Waist attitude{tag} - {run_label}")
+        add_attitude_plots(ax5, t_base, d_base, c_base, run_label)
+        ax5[0].legend(loc="upper right", fontsize=8)
+        figures.append((fig5, f"plot{sfx}_{stem}_waist_attitude.png"))
+
+    # vertical reaction force (Balance_control.pdf Fig. 7(d))
+    if "current_grf_force" in data:
+        grf = get_series(data, "current", "grf", "force")
+        fz = grf[:, 2]
+        t_grf = np.arange(len(fz)) * dt
+        fz_max = float(np.max(fz))
+        fig6, ax6 = plt.subplots(1, 1, figsize=(10, 4))
+        fig6.suptitle(f"Vertical reaction force{tag} - {run_label}")
+        ax6.plot(t_grf, fz, label=f"{run_label} Fz")
+        ax6.axhline(fz_max, color="red", linestyle="--", label=f"max {fz_max:.1f} N")
+        ax6.set_ylabel("vertical reaction force [N]")
+        ax6.set_xlabel("time [s]")
+        ax6.grid(True, alpha=0.3)
+        ax6.legend(loc="upper right", fontsize=8)
+        figures.append((fig6, f"plot{sfx}_{stem}_vertical_force.png"))
+
+    plt.tight_layout()
+
+    return figures
+
 
 def plot_comparison(log_paths, eta):
     runs = []
     for path in log_paths:
-        data, dt, use_kf, use_mpc, open_loop = load_run(path)
+        data, dt, use_kf, use_mpc, use_cp, open_loop = load_run(path)
         d_com, c_com, n_com = truncate_pair(
             get_series(data, "desired", "com", "pos"),
             get_series(data, "current", "com", "pos"),
@@ -161,8 +230,21 @@ def plot_comparison(log_paths, eta):
         d_xi = compute_xi(d_com[:n_xi], d_com_vel[:n_xi], eta)
         c_xi = compute_xi(c_com[:n_xi], c_com_vel[:n_xi], eta)
         stem = Path(path).stem
+
+        att_err = None
+        if "current_base_pos" in data:
+            d_base, c_base, _ = truncate_pair(
+                get_series(data, "desired", "base", "pos"),
+                get_series(data, "current", "base", "pos"),
+            )
+            att_err = rotvec_to_attitude_deg(d_base) - rotvec_to_attitude_deg(c_base)
+
+        grf_z = None
+        if "current_grf_force" in data:
+            grf_z = get_series(data, "current", "grf", "force")[:, 2]
+
         runs.append({
-            "label": stem + kf_label(use_kf) + mpc_label(use_mpc, open_loop),
+            "label": stem + kf_label(use_kf) + mpc_label(use_mpc, open_loop) + cp_label(use_cp),
             "dt": dt,
             "t_com": np.arange(n_com) * dt,
             "t_zmp": np.arange(n_zmp) * dt,
@@ -170,6 +252,8 @@ def plot_comparison(log_paths, eta):
             "com_err": d_com - c_com,
             "zmp_err": d_zmp - c_zmp,
             "xi_err":  d_xi  - c_xi,
+            "att_err": att_err,
+            "grf_z":   grf_z,
         })
 
     fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
@@ -202,13 +286,46 @@ def plot_comparison(log_paths, eta):
     ax3[-1].set_xlabel("time [s]")
     ax3[0].legend(loc="upper right", fontsize=8)
 
-    plt.tight_layout()
-
-    return [
+    figures = [
         (fig,  "comparison_com_errors.png"),
         (fig2, "comparison_zmp_errors.png"),
         (fig3, "comparison_capture_point_errors.png"),
     ]
+
+    # waist attitude error comparison (Balance_control.pdf Fig. 7(a))
+    att_runs = [r for r in runs if r["att_err"] is not None]
+    if att_runs:
+        fig4, ax4 = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+        fig4.suptitle("Waist attitude error comparison")
+        for run in att_runs:
+            t = np.arange(len(run["att_err"])) * run["dt"]
+            for dim, angle in enumerate(ATTITUDE_ANGLES):
+                r = rms(run["att_err"][:, dim])
+                ax4[dim].plot(t, run["att_err"][:, dim], label=f'{run["label"]} {angle} (RMS {r:.3f})')
+                ax4[dim].set_ylabel(f"{angle} err [deg]")
+                ax4[dim].grid(True, alpha=0.3)
+        ax4[-1].set_xlabel("time [s]")
+        ax4[0].legend(loc="upper right", fontsize=8)
+        figures.append((fig4, "comparison_waist_attitude.png"))
+
+    # vertical reaction force comparison (Balance_control.pdf Fig. 7(d))
+    grf_runs = [r for r in runs if r["grf_z"] is not None]
+    if grf_runs:
+        fig5, ax5 = plt.subplots(1, 1, figsize=(10, 4))
+        fig5.suptitle("Vertical reaction force comparison")
+        for run in grf_runs:
+            t = np.arange(len(run["grf_z"])) * run["dt"]
+            fz_max = float(np.max(run["grf_z"]))
+            ax5.plot(t, run["grf_z"], label=f'{run["label"]} (max {fz_max:.1f} N)')
+        ax5.set_ylabel("vertical reaction force [N]")
+        ax5.set_xlabel("time [s]")
+        ax5.grid(True, alpha=0.3)
+        ax5.legend(loc="upper right", fontsize=8)
+        figures.append((fig5, "comparison_vertical_force.png"))
+
+    plt.tight_layout()
+
+    return figures
 
 
 def main():
