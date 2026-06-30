@@ -178,6 +178,19 @@ class Ismpc:
       mc_x += self.sigma(time_array, ds_start_time, fs_end_time) * (fs_target_pos[0] - fs_current_pos[0])
       mc_y += self.sigma(time_array, ds_start_time, fs_end_time) * (fs_target_pos[1] - fs_current_pos[1])
 
+    # final step: the loop above leaves the constraint on the last footstep (a
+    # single foot). During the last double support both last feet are planted, so
+    # re-center the ZMP on the support-polygon center (midpoint of the last two
+    # footsteps) for a stable two-foot rest instead of resting on one foot.
+    last = len(self.footstep_planner.plan) - 1
+    if last >= 1:
+      ds_start_time = self.footstep_planner.get_start_time(last) + self.footstep_planner.plan[last]['ss_duration']
+      fs_end_time = ds_start_time + self.footstep_planner.plan[last]['ds_duration']
+      last_foot_pos = self.footstep_planner.plan[last]['pos']
+      center_pos = (last_foot_pos + self.footstep_planner.plan[last - 1]['pos']) / 2.
+      mc_x += self.sigma(time_array, ds_start_time, fs_end_time) * (center_pos[0] - last_foot_pos[0])
+      mc_y += self.sigma(time_array, ds_start_time, fs_end_time) * (center_pos[1] - last_foot_pos[1])
+
     return mc_x, mc_y, np.zeros(self.N)
   
   def compute_cp(self, com_pos, com_vel):

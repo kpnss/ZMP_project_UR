@@ -52,6 +52,12 @@ class CPController:
         if step_index + 1 < len(self.footstep_planner.plan):
             p_next = np.array([self.footstep_planner.plan[step_index + 1]['pos'][0],
                                self.footstep_planner.plan[step_index + 1]['pos'][1], 0.0])
+        elif step_index >= 1:
+            # last step: there is no next footstep, so during the final double
+            # support, drive the ZMP/CP to the center of the two planted feet
+            prev_pos = self.footstep_planner.plan[step_index - 1]['pos']
+            p_next = np.array([(step['pos'][0] + prev_pos[0]) / 2.,
+                               (step['pos'][1] + prev_pos[1]) / 2., 0.0])
         else:
             p_next = p_current
 
@@ -118,8 +124,8 @@ class CPController:
         # inverse_dynamics consumes only desired['com']['acc'] (it ignores
         # desired['zmp']), so this term is the ONLY path by which the CP feedback
         # correction reaches the robot. Using p_ref here would discard the feedback.
-        com_acc_ref = np.zeros(3) 
-        com_acc_ref[0:2] = (self.eta**2) * (com_pos_ref_new[0:2] - p_cmd[0:2])
+        # For constant height (com_z = h, zmp_z = 0, eta^2 = g/h) the z term reduces to eta^2*h - g = 0
+        com_acc_ref = (self.eta**2) * (com_pos_ref_new - p_cmd) + np.array([0., 0., -self.params['g']])
 
         prev_zmp = self.lip_state['zmp']['pos'].copy()
         self.lip_state['zmp']['pos'] = p_cmd

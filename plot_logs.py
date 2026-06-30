@@ -171,10 +171,10 @@ def plot_single_run(log_path, run_label, eta):
     ax4[0].legend(loc="upper right", fontsize=8)
 
     figures = [
-        (fig1, f"plot{sfx}_{stem}_com_trajectories.png"),
-        (fig2, f"plot{sfx}_{stem}_zmp_trajectories.png"),
-        (fig3, f"plot{sfx}_{stem}_capture_point_trajectories.png"),
-        (fig4, f"plot{sfx}_{stem}_tracking_errors.png"),
+        (fig1, f"com_trajectories.png"),
+        (fig2, f"zmp_trajectories.png"),
+        (fig3, f"capture_point_trajectories.png"),
+        (fig4, f"tracking_errors.png"),
     ]
 
     # waist attitude (Balance_control.pdf Fig. 7(a))
@@ -188,7 +188,7 @@ def plot_single_run(log_path, run_label, eta):
         fig5.suptitle(f"Waist attitude{tag} - {run_label}")
         add_attitude_plots(ax5, t_base, d_base, c_base, run_label)
         ax5[0].legend(loc="upper right", fontsize=8)
-        figures.append((fig5, f"plot{sfx}_{stem}_waist_attitude.png"))
+        figures.append((fig5, f"waist_attitude.png"))
 
     # vertical reaction force (Balance_control.pdf Fig. 7(d))
     if "current_grf_force" in data:
@@ -204,7 +204,7 @@ def plot_single_run(log_path, run_label, eta):
         ax6.set_xlabel("time [s]")
         ax6.grid(True, alpha=0.3)
         ax6.legend(loc="upper right", fontsize=8)
-        figures.append((fig6, f"plot{sfx}_{stem}_vertical_force.png"))
+        figures.append((fig6, f"vertical_force.png"))
 
     plt.tight_layout()
 
