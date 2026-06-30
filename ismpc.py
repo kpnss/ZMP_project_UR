@@ -19,6 +19,7 @@ class Ismpc:
     self.k_i = params['k_i']
     self.alpha = params['alpha']
     self.use_cp = params.get('use_cp', True)
+    self.use_open_loop = params.get('open_loop', False)
 
     # lip model matrices
     self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]]) # per aggiungere il lag g_p basta cambiare il terzo 0 del terzo vettore
@@ -90,18 +91,25 @@ class Ismpc:
     
     mc_x, mc_y, mc_z = self.generate_moving_constraint(t)
 
-    # propagate internal LIP state (keeps QP initial condition kinematically consistent)
-    if self.x_mpc is None:
-      self.x_mpc = self.x.copy()
+  
+
+    if self.use_open_loop:
+      # propagate internal LIP state (keeps QP initial condition kinematically consistent)
+      if self.x_mpc is None:
+        self.x_mpc = self.x.copy()
+      else:
+        b = self.B_lip.flatten()  # [0, 0, 1]
+        g_vec = np.array([0., -self.params['g'], 0.])
+        dx = np.concatenate([
+          self.A_lip @ self.x_mpc[0:3] + b * self.u[0],
+          self.A_lip @ self.x_mpc[3:6] + b * self.u[1],
+          self.A_lip @ self.x_mpc[6:9] + b * self.u[2] + g_vec,
+        ])
+        self.x_mpc = self.x_mpc + self.delta * dx
+
     else:
-      b = self.B_lip.flatten()  # [0, 0, 1]
-      g_vec = np.array([0., -self.params['g'], 0.])
-      dx = np.concatenate([
-        self.A_lip @ self.x_mpc[0:3] + b * self.u[0],
-        self.A_lip @ self.x_mpc[3:6] + b * self.u[1],
-        self.A_lip @ self.x_mpc[6:9] + b * self.u[2] + g_vec,
-      ])
-      self.x_mpc = self.x_mpc + self.delta * dx
+      self.x_mpc = self.x.copy()
+    
 
     # solve optimization problem
     self.opt.set_value(self.x0_param, self.x_mpc)
@@ -145,6 +153,7 @@ class Ismpc:
     self.lip_state['com']['pos'] = np.array([self.x_mpc[0], self.x_mpc[3], self.x_mpc[6]])
     self.lip_state['com']['vel'] = np.array([self.x_mpc[1], self.x_mpc[4], self.x_mpc[7]])
     self.lip_state['zmp']['pos'] = np.array([self.x_mpc[2], self.x_mpc[5], self.x_mpc[8]])
+
     self.lip_state['zmp']['vel'] = self.u
     self.lip_state['com']['acc'] = self.eta**2 * (self.lip_state['com']['pos'] - self.lip_state['zmp']['pos']) + np.hstack([0, 0, - self.params['g']])
 

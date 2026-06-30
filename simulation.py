@@ -9,7 +9,6 @@ import ismpc
 import cp_controller
 import footstep_planner
 import inverse_dynamics as id
-import mpc_open
 import filter
 import foot_trajectory_generator as ftg
 from logger import Logger
@@ -51,6 +50,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             # Enable the capture-point feedback correction. When False the
             # controllers run feedforward only (plain MPC / plain ZMP tracking).
             'use_cp': use_cp,
+            'open_loop': open_loop
         }
 
         if not self.use_mpc:
@@ -122,9 +122,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # initialize controller (MPC or CP feedback). Both expose A_lip/B_lip and a
         # solve() returning (lip_state, contact, p_cmd, xi_error_int).
-        if self.open_loop:
-            self.mpc = mpc_open.MpcOpen(self.initial, self.footstep_planner, self.params)
-        elif self.use_mpc:
+        if self.use_mpc:
             self.mpc = ismpc.Ismpc(self.initial, self.footstep_planner, self.params)
         else:
             self.mpc = cp_controller.CPController(self.initial, self.footstep_planner, self.params)
@@ -326,7 +324,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-plot", action="store_true", help="Skip plotting after saving the log.")
     args = parser.parse_args()
 
-    suffix = f"{kf_suffix(not args.no_kf)}{mpc_suffix(not args.no_mpc)}{cp_suffix(not args.no_cp)}"
+    suffix = f"{kf_suffix(not args.no_kf)}{mpc_suffix(not args.no_mpc)}{cp_suffix(not args.no_cp)}" + ("_openloop" if args.open_loop else "")
 
     args.log_path = f"logs/log{suffix}.npz"
 

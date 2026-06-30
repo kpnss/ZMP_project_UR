@@ -118,7 +118,7 @@ class CPController:
         # inverse_dynamics consumes only desired['com']['acc'] (it ignores
         # desired['zmp']), so this term is the ONLY path by which the CP feedback
         # correction reaches the robot. Using p_ref here would discard the feedback.
-        com_acc_ref = np.zeros(3)
+        com_acc_ref = np.zeros(3) 
         com_acc_ref[0:2] = (self.eta**2) * (com_pos_ref_new[0:2] - p_cmd[0:2])
 
         prev_zmp = self.lip_state['zmp']['pos'].copy()
