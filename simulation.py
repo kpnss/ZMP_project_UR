@@ -31,8 +31,8 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'h': 0.72,
             'foot_size': 0.1,
             'step_height': 0.05,
-            'ss_duration': 30,
-            'ds_duration': 10,
+            'ss_duration': 70,
+            'ds_duration': 30,
             'world_time_step': world.getTimeStep(),
             'first_swing': 'rfoot',
             'µ': 0.5,
@@ -63,7 +63,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         # gains for lagless IS-MPC plant (option B): places CP pole exactly at alpha
         self.params['k_1'] = self.params['alpha'] / self.params['eta'] - 1.0
         self.params['k_2'] = 0.0
-        self.params['k_i'] = 0.0
+        self.params['k_i'] = - self.params['alpha'] * self.params['gamma'] / self.params['eta']
 
 
         # robot links

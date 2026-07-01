@@ -152,7 +152,7 @@ class Ismpc:
     # create output LIP state da MPC (use internal propagated state, not raw sensor)
     self.lip_state['com']['pos'] = np.array([self.x_mpc[0], self.x_mpc[3], self.x_mpc[6]])
     self.lip_state['com']['vel'] = np.array([self.x_mpc[1], self.x_mpc[4], self.x_mpc[7]])
-    self.lip_state['zmp']['pos'] = np.array([self.x_mpc[2], self.x_mpc[5], self.x_mpc[8]])
+    self.lip_state['zmp']['pos'] = p_cmd
 
     self.lip_state['zmp']['vel'] = self.u
     self.lip_state['com']['acc'] = self.eta**2 * (self.lip_state['com']['pos'] - self.lip_state['zmp']['pos']) + np.hstack([0, 0, - self.params['g']])
