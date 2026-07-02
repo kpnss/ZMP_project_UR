@@ -17,13 +17,23 @@ class Ismpc:
     self.k_1 = params['k_1']
     self.k_2 = params['k_2']
     self.k_i = params['k_i']
+    self.g_p = params['g_p']
     self.alpha = params['alpha']
     self.use_cp = params.get('use_cp', True)
     self.use_open_loop = params.get('open_loop', False)
+    self.use_lag = params.get('use_lag', False)   # <-- add this, default False
 
     # lip model matrices
-    self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]]) # per aggiungere il lag g_p basta cambiare il terzo 0 del terzo vettore
-    self.B_lip = np.array([[0], [0], [1]])
+    if self.use_lag:
+        # ZMP first-order lag dynamics, eq. (3) of the paper: p_dot = -g_p*p + g_p*p_d
+        self.A_lip = np.array([[0, 1, 0],
+                                [self.eta**2, 0, -self.eta**2],
+                                [0, 0, -self.g_p]])
+        self.B_lip = np.array([[0], [0], [self.g_p]])
+    else:
+        # original: ZMP velocity is the direct control input (no lag)
+        self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]])
+        self.B_lip = np.array([[0], [0], [1]])
 
     # dynamics
     self.f = lambda x, u: cs.vertcat(
@@ -60,13 +70,16 @@ class Ismpc:
 
     self.opt.minimize(cost)
 
-    # zmp constraints
-    self.opt.subject_to(self.X[2, 1:].T <= self.zmp_x_mid_param + self.foot_size / 2.)
-    self.opt.subject_to(self.X[2, 1:].T >= self.zmp_x_mid_param - self.foot_size / 2.)
-    self.opt.subject_to(self.X[5, 1:].T <= self.zmp_y_mid_param + self.foot_size / 2.)
-    self.opt.subject_to(self.X[5, 1:].T >= self.zmp_y_mid_param - self.foot_size / 2.)
-    self.opt.subject_to(self.X[8, 1:].T <= self.zmp_z_mid_param + self.foot_size / 2.)
-    self.opt.subject_to(self.X[8, 1:].T >= self.zmp_z_mid_param - self.foot_size / 2.)
+    # ZMP constraints: hard for normal mode, soft (via cost penalty) for lag mode
+    if not self.use_lag:
+        margin = self.foot_size / 2.
+        self.opt.subject_to(self.X[2, 1:].T <= self.zmp_x_mid_param + margin)
+        self.opt.subject_to(self.X[2, 1:].T >= self.zmp_x_mid_param - margin)
+        self.opt.subject_to(self.X[5, 1:].T <= self.zmp_y_mid_param + margin)
+        self.opt.subject_to(self.X[5, 1:].T >= self.zmp_y_mid_param - margin)
+        self.opt.subject_to(self.X[8, 1:].T <= self.zmp_z_mid_param + margin)
+        self.opt.subject_to(self.X[8, 1:].T >= self.zmp_z_mid_param - margin)
+    # For lag mode: constraints already soft in cost, no hard bounds
 
     # initial state constraint
     self.opt.subject_to(self.X[:, 0] == self.x0_param)
@@ -154,7 +167,10 @@ class Ismpc:
     self.lip_state['com']['vel'] = np.array([self.x_mpc[1], self.x_mpc[4], self.x_mpc[7]])
     self.lip_state['zmp']['pos'] = p_cmd
 
-    self.lip_state['zmp']['vel'] = self.u
+    if self.use_lag:
+        self.lip_state['zmp']['vel'] = self.g_p * (self.u - self.lip_state['zmp']['pos'])
+    else:
+        self.lip_state['zmp']['vel'] = self.u
     self.lip_state['com']['acc'] = self.eta**2 * (self.lip_state['com']['pos'] - self.lip_state['zmp']['pos']) + np.hstack([0, 0, - self.params['g']])
 
     contact = self.footstep_planner.get_phase_at_time(t)

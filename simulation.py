@@ -15,7 +15,8 @@ from logger import Logger
 import argparse
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
-    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True, use_cp=True, open_loop=False):
+    def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True,
+                use_cp=True, open_loop=False, use_lag=False):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
@@ -26,13 +27,14 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.use_mpc = use_mpc
         self.open_loop = open_loop
         self.use_cp = use_cp
+        self.use_lag = use_lag
         self.params = {
             'g': 9.81,
             'h': 0.72,
             'foot_size': 0.1,
             'step_height': 0.05,
-            'ss_duration': 70,
-            'ds_duration': 30,
+            'ss_duration': 70, #70
+            'ds_duration': 30, #30
             'world_time_step': world.getTimeStep(),
             'first_swing': 'rfoot',
             'µ': 0.5,
@@ -43,14 +45,16 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'alpha': -3.0,
 
             # extra poles/delay gain used only by the CPController (--no-mpc)
-            'beta': -8.0,    # ZMP pole
-            'gamma': -1.0,   # CP-integral pole
-            # 'g_p': 20.0,     # ZMP first-order-lag gain
+            'beta': -8.0,
+            'gamma': -1.0,
 
-            # Enable the capture-point feedback correction. When False the
-            # controllers run feedforward only (plain MPC / plain ZMP tracking).
+            # ZMP first-order-lag gain (only used when use_lag=True)
+            'g_p': 20.0,
+
             'use_cp': use_cp,
-            'open_loop': open_loop
+            'open_loop': open_loop,
+            'use_lag': use_lag,
+            'use_open_loop': open_loop,
         }
 
         if not self.use_mpc:
@@ -60,10 +64,16 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         # natural frequency of the LIP model
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
 
-        # gains for lagless IS-MPC plant (option B): places CP pole exactly at alpha
-        self.params['k_1'] = self.params['alpha'] / self.params['eta'] - 1.0
-        self.params['k_2'] = 0.0
-        self.params['k_i'] = - self.params['alpha'] * self.params['gamma'] / self.params['eta']
+        if self.params.get('use_lag', False):
+            g_p = self.params['g_p']
+            beta = self.params['beta']
+            self.params['k_1'] = -(self.params['alpha']*beta + beta*self.params['gamma'] + self.params['gamma']*self.params['alpha'] - self.params['eta']*(self.params['alpha']+beta+self.params['gamma']-self.params['eta'])) / (self.params['eta']*g_p)
+            self.params['k_2'] = -(self.params['alpha']+beta+self.params['gamma']+g_p-self.params['eta']) / g_p
+            self.params['k_i'] = (self.params['alpha']*beta*self.params['gamma']) / (self.params['eta']*g_p)
+        else:
+            self.params['k_1'] = self.params['alpha']/self.params['eta'] - 1.0
+            self.params['k_2'] = 0.0
+            self.params['k_i'] = -self.params['alpha']*self.params['gamma']/self.params['eta']
 
 
         # robot links
@@ -165,7 +175,11 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
 
         # update kalman filter
         if self.use_kf:
-            u = np.array([self.desired['zmp']['vel'][0], self.desired['zmp']['vel'][1], self.desired['zmp']['vel'][2]])
+            if self.params['use_lag']:
+                u = np.array([self.desired['zmp']['pos'][0], self.desired['zmp']['pos'][1], self.desired['zmp']['pos'][2]])
+            else:
+                u = np.array([self.desired['zmp']['vel'][0], self.desired['zmp']['vel'][1], self.desired['zmp']['vel'][2]])
+            
             self.kf.predict(u)
             x_flt, _ = self.kf.update(np.array([self.current['com']['pos'][0], self.current['com']['vel'][0], self.current['zmp']['pos'][0], \
                                                 self.current['com']['pos'][1], self.current['com']['vel'][1], self.current['zmp']['pos'][1], \
@@ -322,10 +336,12 @@ if __name__ == "__main__":
     parser.add_argument("--open-loop", action="store_true", help="Use open-loop MPC (no feedback from real robot state).")
     parser.add_argument("--no-cp", action="store_true", help="Disable the capture-point feedback (plain MPC / plain ZMP tracking).")
     parser.add_argument("--no-plot", action="store_true", help="Skip plotting after saving the log.")
+    parser.add_argument("--lag", action="store_true", help="Enable first-order ZMP lag dynamics (Sec. II-B of the paper).")
     args = parser.parse_args()
 
-    suffix = f"{kf_suffix(not args.no_kf)}{mpc_suffix(not args.no_mpc)}{cp_suffix(not args.no_cp)}" + ("_openloop" if args.open_loop else "")
-
+    suffix = f"{kf_suffix(not args.no_kf)}{mpc_suffix(not args.no_mpc)}{cp_suffix(not args.no_cp)}" \
+         + ("_openloop" if args.open_loop else "") \
+         + ("_lag" if args.lag else "")
     args.log_path = f"logs/log{suffix}.npz"
 
     world = dart.simulation.World()
@@ -346,7 +362,7 @@ if __name__ == "__main__":
             body.setMass(1e-8)
             body.setInertia(default_inertia)
 
-    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, use_cp=not args.no_cp, open_loop=args.open_loop)
+    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, use_cp=not args.no_cp, open_loop=args.open_loop, use_lag=args.lag)
 
     # create world node and add it to viewer
     viewer = dart.gui.osg.Viewer()

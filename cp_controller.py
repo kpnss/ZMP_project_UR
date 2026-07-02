@@ -6,35 +6,44 @@ class CPController:
         self.delta = params['world_time_step']
         self.eta = params['eta']
         self.use_cp = params.get('use_cp', True)
+        self.use_lag = params.get('use_lag', False)   # <-- add this
         self.footstep_planner = footstep_planner
-        
-        # Closed-loop poles for the CP-error + CP-integral dynamics (both < 0):
-        #   alpha -> capture-point error pole, gamma -> integrator pole.
+
         alpha = params['alpha']
         gamma = params['gamma']
 
-        # The commanded ZMP is realized within one control step (simulation.py sets
-        # desired['zmp']['vel'] = (p_cmd - zmp)/dt), so the plant has NO ZMP lag
-        # (g_p -> inf). This collapses Morisawa's 3rd-order system (Balance_control.pdf
-        # eq. 20) to a 2nd-order one in [e_xi, integral(e_xi)]; 'beta' and 'g_p' no
-        # longer enter. Placing the two remaining poles at {alpha, gamma} on the
-        # lagless plant gives:
-        #   k_1 = (alpha + gamma) / eta - 1
-        #   k_2 = 0                          (no ZMP-lag state left to feed back)
-        #   k_I = -alpha * gamma / eta
-        self.k_1 = (alpha + gamma) / self.eta - 1.0
-        self.k_2 = 0.0
-        self.k_I = -(alpha * gamma) / self.eta
+        if self.use_lag:
+            # Full 3rd-order CPI-ZMP system WITH ZMP lag (Balance_control.pdf eq. 20-22).
+            # Poles {alpha, beta, gamma} assigned via pole placement; 'beta' and 'g_p'
+            # now enter, unlike the lagless case below.
+            self.g_p = params['g_p']
+            beta = params['beta']
+            self.k_1 = -(alpha*beta + beta*gamma + gamma*alpha
+                        - self.eta*(alpha + beta + gamma - self.eta)) / (self.eta * self.g_p)
+            self.k_2 = -(alpha + beta + gamma + self.g_p - self.eta) / self.g_p
+            self.k_I = (alpha * beta * gamma) / (self.eta * self.g_p)
+
+            self.A_lip = np.array([[0, 1, 0],
+                                    [self.eta**2, 0, -self.eta**2],
+                                    [0, 0, -self.g_p]])
+            self.B_lip = np.array([[0], [0], [self.g_p]])
+        else:
+            # Lagless plant (g_p -> inf): commanded ZMP realized within one control step.
+            # Collapses to the 2nd-order system in [e_xi, integral(e_xi)]; 'beta' and
+            # 'g_p' don't enter.
+            self.k_1 = (alpha + gamma) / self.eta - 1.0
+            self.k_2 = 0.0
+            self.k_I = -(alpha * gamma) / self.eta
+
+            self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]])
+            self.B_lip = np.array([[0], [0], [1]])
+
         self.cp_error_integral = np.zeros(2)
-        
-        self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]])
-        self.B_lip = np.array([[0], [0], [1]])
-        
+
         self.lip_state = {
             'com': {'pos': initial['com']['pos'].copy(), 'vel': initial['com']['vel'].copy(), 'acc': np.zeros(3)},
             'zmp': {'pos': initial['zmp']['pos'].copy(), 'vel': np.zeros(3)}
         }
-
     def solve(self, current, t):
         # 1. Recupero informazioni sul passo corrente e successivo
         step_index = self.footstep_planner.get_step_index_at_time(t)
@@ -87,13 +96,12 @@ class CPController:
 
         # Legge di controllo ZMP completa (Eq. 21)
         p_cmd = np.zeros(3)
+        p_cmd = np.zeros(3)
         if self.use_cp:
-            p_cmd[0:2] = (
-                p_ref[0:2]
-                - self.k_1 * cp_error
-                - self.k_2 * (p_meas[0:2] - p_ref[0:2])
-                # - self.k_I * self.cp_error_integral
-            )
+            fb = - self.k_1 * cp_error - self.k_2 * (p_meas[0:2] - p_ref[0:2])
+            if self.use_lag:
+                fb -= self.k_I * self.cp_error_integral
+            p_cmd[0:2] = p_ref[0:2] + fb
         else:
             # Plain ZMP tracking: follow the planned ZMP trajectory, no CP feedback.
             p_cmd[0:2] = p_ref[0:2]
@@ -128,8 +136,14 @@ class CPController:
         com_acc_ref = (self.eta**2) * (com_pos_ref_new - p_cmd) + np.array([0., 0., -self.params['g']])
 
         prev_zmp = self.lip_state['zmp']['pos'].copy()
-        self.lip_state['zmp']['pos'] = p_cmd
-        self.lip_state['zmp']['vel'] = (p_cmd - prev_zmp) / self.delta
+        if self.use_lag:
+            # First-order lag toward the commanded ZMP: p_dot = g_p*(p_cmd - p)
+            zmp_vel = self.g_p * (p_cmd - prev_zmp)
+            self.lip_state['zmp']['pos'] = prev_zmp + zmp_vel * self.delta
+            self.lip_state['zmp']['vel'] = zmp_vel
+        else:
+            self.lip_state['zmp']['pos'] = p_cmd
+            self.lip_state['zmp']['vel'] = (p_cmd - prev_zmp) / self.delta
         self.lip_state['com']['pos'] = com_pos_ref_new
         self.lip_state['com']['vel'] = com_vel_ref
         self.lip_state['com']['acc'] = com_acc_ref
