@@ -84,13 +84,15 @@ class Ismpc:
     # initial state constraint
     self.opt.subject_to(self.X[:, 0] == self.x0_param)
 
-    # stability constraint with periodic tail (pure CP periodicity, no ZMP subtraction)
-    self.opt.subject_to(self.X[1, 0     ] + self.eta * self.X[0, 0     ] == \
-                        self.X[1, self.N] + self.eta * self.X[0, self.N])
-    self.opt.subject_to(self.X[4, 0     ] + self.eta * self.X[3, 0     ] == \
-                        self.X[4, self.N] + self.eta * self.X[3, self.N])
-    self.opt.subject_to(self.X[7, 0     ] + self.eta * self.X[6, 0     ] == \
-                        self.X[7, self.N] + self.eta * self.X[6, self.N])
+
+    # stability constraint with periodic tail
+    self.opt.subject_to(self.X[1, 0     ] + self.eta * (self.X[0, 0     ] - self.X[2, 0     ]) == \
+                        self.X[1, self.N] + self.eta * (self.X[0, self.N] - self.X[2, self.N]))
+    self.opt.subject_to(self.X[4, 0     ] + self.eta * (self.X[3, 0     ] - self.X[5, 0     ]) == \
+                        self.X[4, self.N] + self.eta * (self.X[3, self.N] - self.X[5, self.N]))
+    self.opt.subject_to(self.X[7, 0     ] + self.eta * (self.X[6, 0     ] - self.X[8, 0     ]) == \
+                        self.X[7, self.N] + self.eta * (self.X[6, self.N] - self.X[8, self.N]))
+
 
     # state
     self.x = np.zeros(9)
@@ -132,7 +134,9 @@ class Ismpc:
 
     sol = self.opt.solve()
 
-    self.u = sol.value(self.U[:,0])
+    self.u = sol.value(self.U[:,0])    
+    self.x = sol.value(self.X[:, 1])  # update internal LIP state to the first predicted state
+
 
     if self.use_cp:
       p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD prodotta da MPC
@@ -163,8 +167,8 @@ class Ismpc:
     self.opt.set_initial(self.X, sol.value(self.X))
 
     # create output LIP state da MPC (use internal propagated state, not raw sensor)
-    self.lip_state['com']['pos'] = np.array([self.x_mpc[0], self.x_mpc[3], self.x_mpc[6]])
-    self.lip_state['com']['vel'] = np.array([self.x_mpc[1], self.x_mpc[4], self.x_mpc[7]])
+    self.lip_state['com']['pos'] = np.array([self.x[0], self.x[3], self.x[6]])
+    self.lip_state['com']['vel'] = np.array([self.x[1], self.x[4], self.x[7]])
     self.lip_state['zmp']['pos'] = p_cmd
 
     if self.use_lag:
