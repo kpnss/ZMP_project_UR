@@ -16,7 +16,7 @@ import argparse
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
     def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True,
-                use_cp=True, open_loop=False, use_lag=False):
+                use_cp=True, open_loop=False, use_lag=False, g_p=None):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
@@ -49,7 +49,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'gamma': -1.0,
 
             # ZMP first-order-lag gain (only used when use_lag=True)
-            'g_p': 20.0,
+            'g_p': 20.0 if g_p is None else float(g_p),
 
             'use_cp': use_cp,
             'open_loop': open_loop,
