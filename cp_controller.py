@@ -9,20 +9,17 @@ class CPController:
         self.use_lag = params.get('use_lag', False)   # <-- add this
         self.footstep_planner = footstep_planner
 
-        alpha = params['alpha']
-        gamma = params['gamma']
+        # CP feedback gains: computed once in simulation.py (via cp_feedback_gains)
+        # and passed in through params, same as ismpc reads them.
+        self.k_1 = params['k_1']
+        self.k_2 = params['k_2']
+        self.k_I = params['k_i']
 
         if self.use_lag:
             # Full 3rd-order CPI-ZMP system WITH ZMP lag (Balance_control.pdf eq. 20-22).
             # Poles {alpha, beta, gamma} assigned via pole placement; 'beta' and 'g_p'
             # now enter, unlike the lagless case below.
             self.g_p = params['g_p']
-            beta = params['beta']
-            self.k_1 = -(alpha*beta + beta*gamma + gamma*alpha
-                        - self.eta*(alpha + beta + gamma - self.eta)) / (self.eta * self.g_p)
-            self.k_2 = -(alpha + beta + gamma + self.g_p - self.eta) / self.g_p
-            self.k_I = (alpha * beta * gamma) / (self.eta * self.g_p)
-
             self.A_lip = np.array([[0, 1, 0],
                                     [self.eta**2, 0, -self.eta**2],
                                     [0, 0, -self.g_p]])
@@ -31,10 +28,6 @@ class CPController:
             # Lagless plant (g_p -> inf): commanded ZMP realized within one control step.
             # Collapses to the 2nd-order system in [e_xi, integral(e_xi)]; 'beta' and
             # 'g_p' don't enter.
-            self.k_1 = (alpha + gamma) / self.eta - 1.0
-            self.k_2 = 0.0
-            self.k_I = -(alpha * gamma) / self.eta
-
             self.A_lip = np.array([[0, 1, 0], [self.eta**2, 0, -self.eta**2], [0, 0, 0]])
             self.B_lip = np.array([[0], [0], [1]])
 
@@ -96,11 +89,8 @@ class CPController:
 
         # Legge di controllo ZMP completa (Eq. 21)
         p_cmd = np.zeros(3)
-        p_cmd = np.zeros(3)
         if self.use_cp:
-            fb = - self.k_1 * cp_error - self.k_2 * (p_meas[0:2] - p_ref[0:2])
-            if self.use_lag:
-                fb -= self.k_I * self.cp_error_integral
+            fb = - self.k_1 * cp_error - self.k_2 * (p_meas[0:2] - p_ref[0:2]) - self.k_I * self.cp_error_integral
             p_cmd[0:2] = p_ref[0:2] + fb
         else:
             # Plain ZMP tracking: follow the planned ZMP trajectory, no CP feedback.

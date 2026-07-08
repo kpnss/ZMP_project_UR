@@ -16,7 +16,7 @@ import argparse
 
 class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
     def __init__(self, world, hrp4, log_path=None, autosave_every=100, use_kf=True, use_mpc=True,
-                use_cp=True, open_loop=False, use_lag=False, g_p=None):
+                use_cp=True, open_loop=False, use_lag=False, use_zmp_fb=True, g_p=None):
         super(Hrp4Controller, self).__init__(world)
         self.world = world
         self.hrp4 = hrp4
@@ -28,6 +28,7 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.open_loop = open_loop
         self.use_cp = use_cp
         self.use_lag = use_lag
+        self.use_zmp_fb = use_zmp_fb
         self.params = {
             'g': 9.81,
             'h': 0.72,
@@ -42,11 +43,11 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'dof': self.hrp4.getNumDofs(),
 
             # CP feedback pole
-            'alpha': -3.0,
+            'alpha': -5.0,
 
-            # extra poles/delay gain used only by the CPController (--no-mpc)
-            'beta': -8.0,
-            'gamma': -1.0,
+            # beta only matters in the use_lag branch below
+            'beta': -16.0,
+            'gamma': -3.0,
 
             # ZMP first-order-lag gain (only used when use_lag=True)
             'g_p': 20.0 if g_p is None else float(g_p),
@@ -54,26 +55,17 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'use_cp': use_cp,
             'open_loop': open_loop,
             'use_lag': use_lag,
+            'use_zmp_fb': use_zmp_fb,
             'use_open_loop': open_loop,
         }
-
-        if not self.use_mpc:
-            self.params['ss_duration'] = 50
-            self.params['ds_duration'] = 30
 
         # natural frequency of the LIP model
         self.params['eta'] = np.sqrt(self.params['g'] / self.params['h'])
 
-        if self.params.get('use_lag', False):
-            g_p = self.params['g_p']
-            beta = self.params['beta']
-            self.params['k_1'] = -(self.params['alpha']*beta + beta*self.params['gamma'] + self.params['gamma']*self.params['alpha'] - self.params['eta']*(self.params['alpha']+beta+self.params['gamma']-self.params['eta'])) / (self.params['eta']*g_p)
-            self.params['k_2'] = -(self.params['alpha']+beta+self.params['gamma']+g_p-self.params['eta']) / g_p
-            self.params['k_i'] = (self.params['alpha']*beta*self.params['gamma']) / (self.params['eta']*g_p)
-        else:
-            self.params['k_1'] = self.params['alpha']/self.params['eta'] - 1.0
-            self.params['k_2'] = 0.0
-            self.params['k_i'] = -self.params['alpha']*self.params['gamma']/self.params['eta']
+        self.params['k_1'], self.params['k_2'], self.params['k_i'] = cp_feedback_gains(
+            self.params['alpha'], self.params['beta'], self.params['gamma'],
+            self.params['eta'], self.params['g_p'],
+            use_zmp_fb)
 
 
         # robot links
@@ -335,11 +327,13 @@ if __name__ == "__main__":
     parser.add_argument("--no-mpc", action="store_true", help="Disable MPC and use CP feedback controller instead.")
     parser.add_argument("--open-loop", action="store_true", help="Use open-loop MPC (no feedback from real robot state).")
     parser.add_argument("--no-cp", action="store_true", help="Disable the capture-point feedback (plain MPC / plain ZMP tracking).")
+    parser.add_argument("--no-zmp-fb", action="store_true", help="Disable the k_2*(p-p_ref) ZMP-position feedback term (on by default).")
     parser.add_argument("--no-plot", action="store_true", help="Skip plotting after saving the log.")
     parser.add_argument("--lag", action="store_true", help="Enable first-order ZMP lag dynamics (Sec. II-B of the paper).")
     args = parser.parse_args()
 
     suffix = f"{kf_suffix(not args.no_kf)}{mpc_suffix(not args.no_mpc)}{cp_suffix(not args.no_cp)}" \
+         + ("_nozmpfb" if args.no_zmp_fb else "") \
          + ("_openloop" if args.open_loop else "") \
          + ("_lag" if args.lag else "")
     args.log_path = f"logs/log{suffix}.npz"
@@ -362,7 +356,7 @@ if __name__ == "__main__":
             body.setMass(1e-8)
             body.setInertia(default_inertia)
 
-    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, use_cp=not args.no_cp, open_loop=args.open_loop, use_lag=args.lag)
+    node = Hrp4Controller(world, hrp4, log_path=args.log_path, autosave_every=args.autosave_every, use_kf=not args.no_kf, use_mpc=not args.no_mpc, use_cp=not args.no_cp, open_loop=args.open_loop, use_lag=args.lag, use_zmp_fb=not args.no_zmp_fb)
 
     # create world node and add it to viewer
     viewer = dart.gui.osg.Viewer()
@@ -397,3 +391,30 @@ if __name__ == "__main__":
                     out_path = os.path.join(out_dir, name)
                     fig.savefig(out_path, dpi=300)
                     print(f"Saved: {out_path}")
+
+            # per-axis tracking-error summary (RMSE over post-warmup steps),
+            # same metrics/units as runs_summary.md; Fz reported as its peak.
+            from scipy.spatial.transform import Rotation as R
+            WARMUP_STEPS = 200
+            log = node.logger.log
+            def _arr(batch, item, level):
+                return np.array(log[batch, item, level])
+            w = WARMUP_STEPS
+            zmp_err = (_arr('desired', 'zmp', 'pos') - _arr('current', 'zmp', 'pos'))[w:]
+            com_err = (_arr('desired', 'com', 'pos') - _arr('current', 'com', 'pos'))[w:]
+            d_att = R.from_rotvec(_arr('desired', 'base', 'pos')).as_euler("xyz", degrees=True)[:, :2]
+            c_att = R.from_rotvec(_arr('current', 'base', 'pos')).as_euler("xyz", degrees=True)[:, :2]
+            att_err = (d_att - c_att)[w:]
+            fz = _arr('current', 'grf', 'force')[w:, 2]
+            rmse = lambda a: float(np.sqrt(np.mean(a ** 2)))
+            headers = ["ZMP x [mm]", "ZMP y [mm]", "ZMP z [mm]",
+                       "COM x [mm]", "COM y [mm]", "COM z [mm]",
+                       "waist roll [deg]", "waist pitch [deg]", "max Fz [N]"]
+            values = [
+                f"{rmse(zmp_err[:, 0]) * 1000:.2f}", f"{rmse(zmp_err[:, 1]) * 1000:.2f}", f"{rmse(zmp_err[:, 2]) * 1000:.2f}",
+                f"{rmse(com_err[:, 0]) * 1000:.2f}", f"{rmse(com_err[:, 1]) * 1000:.2f}", f"{rmse(com_err[:, 2]) * 1000:.2f}",
+                f"{rmse(att_err[:, 0]):.3f}", f"{rmse(att_err[:, 1]):.3f}", f"{np.max(fz):.1f}",
+            ]
+            print(f"\nSummary ({Path(args.log_path).stem}, RMSE post-warmup, Fz peak):")
+            print("    ".join(headers))
+            print("    ".join(v.rjust(len(h)) for v, h in zip(values, headers)))

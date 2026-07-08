@@ -36,6 +36,28 @@ def block_diag(*arrays):
 
     return block_matrix
 
+def cp_feedback_gains(alpha, beta, gamma, eta, g_p, use_zmp_fb):
+    """Pole-placement gains (k_1, k_2, k_i) for the capture-point feedback law
+      p_cmd = p_ref - k_1*(xi-xi_ref) - k_2*(p-p_ref) - k_i*int(xi_err).
+
+    With ZMP feedback (`use_zmp_fb=True`) all three poles {alpha, beta, gamma}
+    are placed and the k_2*(p-p_ref) ZMP-position feedback term is active.
+    Without it, that term drops out (k_2 = 0) and only {alpha, gamma} remain.
+    Note this is independent of the plant's ZMP-lag dynamics (`use_lag`).
+    Single source of truth shared by simulation.py and the pole ablation study.
+    """
+    if use_zmp_fb:
+        k_1 = -(alpha*beta + beta*gamma + gamma*alpha
+                - eta*(alpha + beta + gamma - eta)) / (eta * g_p)
+        k_2 = -(alpha + beta + gamma + g_p - eta) / g_p
+        k_i = (alpha * beta * gamma) / (eta * g_p)
+    else:
+        k_1 = (alpha + gamma) / eta - 1.0
+        k_2 = 0.0
+        k_i = -alpha * gamma / eta
+    return k_1, k_2, k_i
+
+
 # solves a constrained QP with casadi
 class QPSolver:
     def __init__(self, n_vars, n_eq_constraints=0, n_ineq_constraints=0):
