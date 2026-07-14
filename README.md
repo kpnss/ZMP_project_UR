@@ -38,6 +38,47 @@ After executing the simulation, you can generate the plots by running
 python plot_logs.py logs/log.npz
 ```
 
+# Reproducing the results
+All numbers in `runs_summary.md` and every ablation plot under `logs/` are produced by two **headless** drivers — no GUI window and no spacebar needed. Use the same environment as the interactive sim (the runs in `runs_summary.md` were produced with Python 3.14, `dartpy` 6.16). Activate it first, then run the commands below from the repository root.
+
+> **Note on determinism.** The simulation contains no random number generator, yet results wobble slightly run-to-run. The spread is small — under ~0.02 mm on the ZMP RMSE, up to ~0.5° peak-to-peak on waist pitch and ~10 N on peak Fz, with COM and ZMP-y essentially unaffected — and the run effectively clusters between two nearly-identical outcomes, so a single run is representative and no averaging is needed. The wobble originates in the numerical pipeline (multithreaded BLAS floating-point reductions plus the DART/OSQP solvers): a sub-ULP difference occasionally tips a near-threshold contact/QP event one way or the other. Pinning the BLAS thread count,
+> ```
+> OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 python simulation.py
+> ```
+> shrinks the wobble but does **not** fully remove it — we did not find a single switch that makes runs bit-for-bit reproducible. The same prefix works for `ablation_poles.py` and `make_runs_summary.py`.
+
+## Summary table (`runs_summary.md`)
+The table has two parts: an 8-row configuration comparison (re-simulated every time) and the ablation rows (read from a cached `raw_runs.pkl`). Regenerate the cache first, then build the table:
+```
+python ablation_poles.py       # 26 headless sims -> logs/ablation_poles/raw_runs.pkl (+ ablation plots)
+python make_runs_summary.py    # 8 headless config sims + reads the cache -> runs_summary.md
+```
+Rerun `ablation_poles.py` before `make_runs_summary.py` whenever a change touches the controller, otherwise the ablation rows keep their stale cached values. `make_runs_summary.py` on its own only refreshes the configuration-comparison rows.
+
+## Pole / g_p ablation plots
+`ablation_poles.py` sweeps each CP-feedback pole (`alpha`, `beta`, `gamma`) and the ZMP-lag gain `g_p` one at a time about its default, writing per-axis error plots into `logs/ablation_poles/`:
+```
+python ablation_poles.py           # default (lagless) plant
+python ablation_poles.py --lag     # same sweep on the ZMP-lag plant -> logs/ablation_poles_lag/
+python ablation_poles.py --replot  # rebuild plots from the cached raw runs (no re-simulation)
+```
+
+## Individual configurations (interactive, with viewer)
+Each row of the configuration table is one flag combination of `simulation.py`. To watch a single config in the DART viewer (press spacebar to start), run:
+
+| config | command |
+|---|---|
+| plain (ISMPC + CP + ZMP feedback) | `python simulation.py` |
+| ISMPC, no capture point | `python simulation.py --no-cp` |
+| no ZMP feedback | `python simulation.py --no-zmp-fb` |
+| ZMP-lag plant | `python simulation.py --lag` |
+| open-loop MPC | `python simulation.py --open-loop` |
+| CP feedback controller (no MPC) | `python simulation.py --no-mpc` |
+| CP controller, no ZMP feedback | `python simulation.py --no-mpc --no-zmp-fb` |
+| CP controller, ZMP-lag plant | `python simulation.py --no-mpc --lag` |
+
+Append `--no-kf` to any of these to disable the Kalman filter. Each run writes `logs/log<suffix>.npz` and, unless `--no-plot` is given, saves the per-run plots into `logs/log<suffix>/`.
+
 # Block Diagram
 The complete block diagram is shown below. Some modifications that were tested were to delete feedback to MPC and passage through Kalman Filter, but this is the most complete diagram.
 
@@ -55,7 +96,7 @@ The complete block diagram is shown below. Some modifications that were tested w
      |                                                                |           |
      |   +-----------+          +-------------------------+           |           |
      |   |    MPC    |--p_ref-->|   CP-ZMP BALANCE        |           |           |
-     |   | (Optimal) |--xi_ref->|   CONTROL (Eq. 12)      |           |           |
+     |   | (Optimal) |--xi_ref->|   CONTROL (Eq. 21)      |           |           |
      |   +-----------+          +-------------------------+           |           |
      |         ^                        (Feedback) |                  |           |
      |_________|___________________________________|__________________|___________|

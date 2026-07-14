@@ -56,9 +56,9 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # three poles are negative (stable), g_p is the positive ZMP-lag gain. Each sweep
 # straddles the default.
 POLES = {
-    'alpha': ([-25.0, -15.0, -10.0, -5.0, -3.0, -2.0, -1.0], -5.0),
-    'beta':  ([-80.0, -40.0, -25.0, -16.0, -8.0, -4.0, -2.0], -16.0),
-    'gamma': ([-15.0, -10.0, -5.0, -3.0, -2, -1], -3.0),
+    'alpha': ([-25.0, -15.0, -10.0, -5.0, -3.0, -2.0, -1.0], -3.0),
+    'beta':  ([-80.0, -40.0, -25.0, -16.0, -8.0, -4.0, -2.0], -8.0),
+    'gamma': ([-15.0, -10.0, -5.0, -3.0, -2, -1], -2.0),
     'g_p':   ([5.0, 10.0, 20.0, 50.0, 70.0, 90.0], 20.0),
 }
 # plant mode + output paths; overridden in main() when --lag is passed

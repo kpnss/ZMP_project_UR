@@ -43,11 +43,11 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
             'dof': self.hrp4.getNumDofs(),
 
             # CP feedback pole
-            'alpha': -5.0,
+            'alpha': -3.0,
 
             # beta only matters in the use_lag branch below
-            'beta': -16.0,
-            'gamma': -3.0,
+            'beta': -8.0,
+            'gamma': -2.0,
 
             # ZMP first-order-lag gain (only used when use_lag=True)
             'g_p': 20.0 if g_p is None else float(g_p),
@@ -103,6 +103,8 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.initial = self.retrieve_state()
         self.contact = 'lfoot' if self.params['first_swing'] == 'rfoot' else 'rfoot' # there is a dummy footstep
         self.desired = copy.deepcopy(self.initial)
+        # last applied ZMP command (KF input in lag mode); desired['zmp'] now logs the reference
+        self.zmp_cmd = self.initial['zmp']['pos'].copy()
 
         # selection matrix for redundant dofs
         redundant_dofs = [ \
@@ -168,7 +170,9 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         # update kalman filter
         if self.use_kf:
             if self.params['use_lag']:
-                u = np.array([self.desired['zmp']['pos'][0], self.desired['zmp']['pos'][1], self.desired['zmp']['pos'][2]])
+                # KF input is the ZMP *command* applied last step (zmp_cmd), NOT
+                # desired['zmp']['pos'] -- the latter now holds the reference p_ref.
+                u = np.asarray(self.zmp_cmd, dtype=float)
             else:
                 u = np.array([self.desired['zmp']['vel'][0], self.desired['zmp']['vel'][1], self.desired['zmp']['vel'][2]])
             
@@ -194,8 +198,12 @@ class Hrp4Controller(dart.gui.osg.RealTimeWorldNode):
         self.desired['com']['pos'] = lip_state['com']['pos']
         self.desired['com']['vel'] = lip_state['com']['vel']
         self.desired['com']['acc'] = lip_state['com']['acc']
-        # ZMP Balance Control
-        self.desired['zmp']['pos'] = p_cmd
+        # ZMP: log the tracking error against p_ref (the pure MPC feedforward for
+        # this instant, from the previous solve) -- the SAME reference the ZMP
+        # feedback term regulates. The realized command p_cmd still drives the robot
+        # (via desired['com']['acc'], computed in the controller) and the KF input.
+        self.zmp_cmd = p_cmd
+        self.desired['zmp']['pos'] = lip_state['zmp'].get('ref', p_cmd)
         self.desired['zmp']['vel'] = (p_cmd - self.current['zmp']['pos']) / self.params['world_time_step']
         self.xi_error_int = xi_error_int
 

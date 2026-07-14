@@ -138,30 +138,41 @@ class Ismpc:
     self.x = sol.value(self.X[:, 1])  # update internal LIP state to the first predicted state
 
 
+    # p_ff: the FRESH MPC ZMP feedforward from THIS solve (time t+dt). It must be the
+    # up-to-date plan -- using a one-step-lagged feedforward destabilizes the LIP.
+    # p_ref: the MPC feedforward for the CURRENT instant t, as predicted at the
+    # PREVIOUS solve (t-1). Pure MPC output, no CP correction. This is the reference
+    # the ZMP feedback term regulates AND the one logged as the ZMP tracking error
+    # (simulation.py), so the reported error equals the fed-back quantity. xi_ref is
+    # the capture point of that same predicted state. Bootstrap step 0 with p_ff.
+    x_next = sol.value(self.X[:, 1])
+    p_ff = x_next[[2, 5, 8]]
+    if self._xi_ref_prev is not None:
+      p_ref  = self._xi_ref_prev[[2, 5, 8]]
+      xi_ref = self.compute_cp(self._xi_ref_prev[[0, 3, 6]], self._xi_ref_prev[[1, 4, 7]])
+    else:
+      p_ref  = p_ff
+      xi_ref = self.compute_cp(x_next[[0, 3, 6]], x_next[[1, 4, 7]])
+    self._xi_ref_prev = x_next
+
     if self.use_cp:
-      p_ref = sol.value(self.X[[2, 5, 8], 1])   # Desired ZMP FEEDFORWARD prodotta da MPC
-
-      p_meas  = current['zmp']['pos']
-
+      p_meas = current['zmp']['pos']
       dt = self.params['world_time_step']
       xi_meas = self.compute_cp(current['com']['pos'], current['com']['vel'])
-      x_next = sol.value(self.X[:, 1])
-      if self._xi_ref_prev is not None:
-        xi_ref = self.compute_cp(self._xi_ref_prev[[0, 3, 6]], self._xi_ref_prev[[1, 4, 7]])
-      else:
-        xi_ref = xi_meas
-      self._xi_ref_prev = x_next
       self.xi_error_int += (xi_meas - xi_ref) * dt
+      # anti-windup: bound the CP-error integral (Balance_control.pdf Sec. IV-D
+      # warns integral saturation causes wind-up). Same +-10cm cap as CPController.
+      self.xi_error_int = np.clip(self.xi_error_int, -0.1, 0.1)
 
       p_cmd = (
-          p_ref
+          p_ff
           - self.k_1 * (xi_meas - xi_ref)
           - self.k_2 * (p_meas - p_ref)
           - self.k_i * self.xi_error_int
       )
     else:
-      # Plain MPC: command the ZMP planned by the MPC, no capture-point feedback.
-      p_cmd = sol.value(self.X[[2, 5, 8], 1])
+      # Plain MPC: command the ZMP planned by the MPC (current solve), no CP feedback.
+      p_cmd = p_ff
 
     self.opt.set_initial(self.U, sol.value(self.U))
     self.opt.set_initial(self.X, sol.value(self.X))
@@ -170,6 +181,7 @@ class Ismpc:
     self.lip_state['com']['pos'] = np.array([self.x[0], self.x[3], self.x[6]])
     self.lip_state['com']['vel'] = np.array([self.x[1], self.x[4], self.x[7]])
     self.lip_state['zmp']['pos'] = p_cmd
+    self.lip_state['zmp']['ref'] = p_ref   # pure MPC feedforward @ t (from prev solve); logged as ZMP-error reference
 
     if self.use_lag:
         self.lip_state['zmp']['vel'] = self.g_p * (self.u - self.lip_state['zmp']['pos'])

@@ -83,9 +83,9 @@ class CPController:
 
         cp_error = xi_meas[0:2] - xi_ref[0:2]
         
-        # Accumulo dell'errore con Anti-Windup a 5cm
+        # Accumulo dell'errore con Anti-Windup a 10cm
         self.cp_error_integral += cp_error * self.delta
-        self.cp_error_integral = np.clip(self.cp_error_integral, -0.05, 0.05)
+        self.cp_error_integral = np.clip(self.cp_error_integral, -0.1, 0.1)
 
         # Legge di controllo ZMP completa (Eq. 21)
         p_cmd = np.zeros(3)
@@ -134,6 +134,7 @@ class CPController:
         else:
             self.lip_state['zmp']['pos'] = p_cmd
             self.lip_state['zmp']['vel'] = (p_cmd - prev_zmp) / self.delta
+        self.lip_state['zmp']['ref'] = p_ref   # planned ZMP the k_2 term regulates; logged as the ZMP-error reference
         self.lip_state['com']['pos'] = com_pos_ref_new
         self.lip_state['com']['vel'] = com_vel_ref
         self.lip_state['com']['acc'] = com_acc_ref

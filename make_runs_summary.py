@@ -214,6 +214,14 @@ def main():
         "Positions in mm, waist attitude in deg, force in N. "
         "A `diverged` run fell (MPC QP blew up) and its metrics are not meaningful.",
         "",
+        "The **ZMP error** is measured against `p_ref` -- the MPC ZMP feedforward "
+        "for the current instant as predicted at the previous step (for the CP "
+        "controller: its planned ZMP) -- i.e. the SAME reference the capture-point "
+        "ZMP-feedback term regulates, NOT the realized command `p_cmd`. Because CP "
+        "feedback intentionally drives the commanded ZMP away from `p_ref` to correct "
+        "capture-point errors, a larger ZMP error here does not by itself mean worse "
+        "balance.",
+        "",
         config_section(),
         "## Ablation studies",
         "",
