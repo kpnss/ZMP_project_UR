@@ -6,6 +6,8 @@ The **ZMP error** is measured against `p_ref` -- the MPC ZMP feedforward for the
 
 ## Configuration comparison (kf on)
 
+Poles used for this table: `alpha = -3`, `beta = -8`, `gamma = -2`; ZMP-lag gain `g_p = 20`; `eta = 3.691`.
+
 Fresh headless runs on the current code/params. Each variant flips one feature off the **plain** baseline (ISMPC + capture-point + ZMP feedback).
 
 Flag columns:
@@ -18,14 +20,14 @@ Flag columns:
 
 | config | mpc | cp fb | zmp fb | lag sys | openloop ref | ZMP x [mm] | ZMP y [mm] | ZMP z [mm] | COM x [mm] | COM y [mm] | COM z [mm] | waist roll [deg] | waist pitch [deg] | max Fz [N] | diverged |
 |---|:---:|:---:|:---:|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|
-| ISMPC (no cp) | ✓ | · | · | · | · | 0.29 | 0.18 | 0.58 | 1.05 | 1.52 | 0.09 | 0.215 | 1.126 | 756.3 | no |
-| plain | ✓ | ✓ | ✓ | · | · | 0.20 | 0.19 | 0.73 | 1.06 | 1.49 | 0.05 | 0.170 | 0.767 | 761.2 | no |
-| no zmp fb | ✓ | ✓ | · | · | · | 0.22 | 0.29 | 0.87 | 1.05 | 1.49 | 0.03 | 0.111 | 0.995 | 575.7 | no |
-| lag | ✓ | ✓ | ✓ | ✓ | · | 9.19 | 16.29 | 0.73 | 1.12 | 1.67 | 0.03 | 0.090 | 0.608 | 785.2 | no |
-| openloop | ✓ | ✓ | ✓ | · | ✓ | 2.31 | 2.81 | 2.16 | 1.17 | 1.16 | 1.13 | 0.152 | 1.077 | 763.0 | no |
-| CP controller | · | ✓ | ✓ | · | ✓ | 16.17 | 26.96 | 0.55 | 4.55 | 6.05 | 1.08 | 0.159 | 0.389 | 766.7 | no |
-| CP controller, no zmp fb | · | ✓ | · | · | ✓ | 18.29 | 30.49 | 0.68 | 4.26 | 5.59 | 1.21 | 0.207 | 0.649 | 772.7 | no |
-| CP controller, lag | · | ✓ | ✓ | ✓ | ✓ | 24.38 | 39.93 | 0.12 | 5.40 | 7.13 | 0.83 | 0.209 | 0.456 | 764.8 | no |
+| ISMPC (no cp) | ✓ | · | · | · | · | 0.30 | 0.24 | 0.59 | 1.02 | 1.51 | 0.17 | 0.241 | 1.376 | 758.3 | no |
+| plain | ✓ | ✓ | ✓ | · | · | 0.26 | 0.36 | 0.63 | 1.04 | 1.51 | 0.10 | 0.123 | 1.114 | 751.7 | no |
+| no zmp fb | ✓ | ✓ | · | · | · | 0.22 | 0.39 | 0.98 | 1.05 | 1.48 | 0.03 | 0.159 | 0.995 | 768.0 | no |
+| lag | ✓ | ✓ | ✓ | ✓ | · | 9.22 | 16.32 | 0.58 | 1.12 | 1.67 | 0.03 | 0.160 | 0.779 | 770.3 | no |
+| openloop | ✓ | ✓ | ✓ | · | ✓ | 2.20 | 3.07 | 2.08 | 1.11 | 1.30 | 1.04 | 0.156 | 1.157 | 768.4 | no |
+| CP controller | · | ✓ | ✓ | · | ✓ | 16.31 | 27.24 | 0.64 | 4.62 | 6.14 | 1.15 | 0.211 | 0.753 | 776.2 | no |
+| CP controller, no zmp fb | · | ✓ | · | · | ✓ | 18.13 | 30.74 | 0.58 | 4.17 | 5.64 | 1.06 | 0.132 | 0.429 | 774.6 | no |
+| CP controller, lag | · | ✓ | ✓ | ✓ | ✓ | 23.82 | 38.83 | 0.14 | 5.08 | 6.48 | 0.96 | 0.168 | 0.534 | 770.6 | no |
 
 ## Ablation studies
 

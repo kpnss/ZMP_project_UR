@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -328,6 +329,197 @@ def plot_comparison(log_paths, eta):
     return figures
 
 
+# ---- ZMP error replot on a shared scale ------------------------------------
+# Each run's own figure is auto-scaled, so two runs cannot be compared by eye.
+# These build one symmetric y-limit per axis (and one x-limit) across a set of
+# logs, then re-render every run with those limits. The MPC and CP-controller
+# runs differ by ~70x in ZMP error, so --split-mpc scales each family on its own
+# and marks the MPC bounds on the CP plots for reference.
+
+ZMP_ERR_NAME = "zmp_errors.png"
+ZMP_ERR_COMPARISON_NAME = "comparison_zmp_errors_same_scale.png"
+ZMP_ERR_GROUP_NAMES = {True: "comparison_zmp_errors_mpc.png",
+                       False: "comparison_zmp_errors_no_mpc.png"}
+# axes kept on ONE scale across every run even under --split-mpc: the two
+# families do not separate in z the way they do in x/y, so splitting it there
+# only makes the two plots harder to compare
+SHARED_ZMP_AXES = ("z",)
+
+# Display name per run stem -- the config labels of the runs summary. Single
+# source of truth: make_runs_summary.config_label() reads this too, so the table
+# rows, the plot titles and the logs/zmp_plots/ links cannot drift apart.
+VARIANT_LABELS = {
+    "log_kf_mpc_no_cp":         "ISMPC (no cp)",
+    "log_kf_mpc_cp":            "plain",
+    "log_kf_mpc_cp_nozmpfb":    "no zmp fb",
+    "log_kf_mpc_cp_lag":        "lag",
+    "log_kf_mpc_cp_openloop":   "openloop",
+    "log_kf_no_mpc_cp":         "CP controller",
+    "log_kf_no_mpc_cp_nozmpfb": "CP controller, no zmp fb",
+    "log_kf_no_mpc_cp_lag":     "CP controller, lag",
+}
+
+
+def variant_label(stem):
+    """Summary label for a run stem; unknown stems keep their filename."""
+    return VARIANT_LABELS.get(stem, stem)
+
+
+def variant_slug(label):
+    """Filename-safe variant name: punctuation dropped, spaces to hyphens."""
+    cleaned = re.sub(r"[^0-9A-Za-z ]+", " ", label)
+    return re.sub(r"-+", "-", "-".join(cleaned.split()))
+
+
+def collect_zmp_errors(log_paths, warmup):
+    runs = []
+    for path in log_paths:
+        data, dt, use_kf, use_mpc, use_cp, open_loop = load_run(path)
+        d_zmp, c_zmp, n = truncate_pair(
+            get_series(data, "desired", "zmp", "pos"),
+            get_series(data, "current", "zmp", "pos"),
+        )
+        runs.append({
+            "stem": Path(path).stem,
+            "label": variant_label(Path(path).stem),
+            "tag": kf_label(use_kf) + mpc_label(use_mpc, open_loop) + cp_label(use_cp),
+            "use_mpc": bool(use_mpc),
+            "t": (np.arange(n) * dt)[warmup:],
+            "err": (d_zmp - c_zmp)[warmup:],
+        })
+    return runs
+
+
+def common_zmp_ylim(runs, percentile, margin=1.05):
+    """One symmetric y-limit per axis, shared by every run in the group."""
+    ylim = []
+    for dim in range(len(AXES)):
+        stacked = np.concatenate([np.abs(r["err"][:, dim]) for r in runs])
+        bound = stacked.max() if percentile >= 100 else np.percentile(stacked, percentile)
+        bound = max(float(bound), 1e-6) * margin
+        ylim.append((-bound, bound))
+    return ylim
+
+
+def common_zmp_xlim(runs):
+    return (0.0, max(float(r["t"][-1]) for r in runs))
+
+
+def apply_zmp_limits(ax, ylim, xlim, ref_ylim=None):
+    """Set the shared limits; ref_ylim marks another group's scale for reference."""
+    for dim, axis_name in enumerate(AXES):
+        if ref_ylim is not None and ref_ylim[dim] is not None:
+            bound = ref_ylim[dim][1]
+            visible = bound <= ylim[dim][1]
+            label = f"MPC scale +/-{bound * 1000:.2f} mm"
+            if visible:
+                for sign in (1, -1):
+                    ax[dim].axhline(sign * bound, color="tab:red", ls="--", lw=1.0,
+                                    alpha=0.8, label=label if sign == 1 else None)
+            else:
+                # the MPC family is wider on this axis, so its bounds fall off-plot
+                ax[dim].plot([], [], color="tab:red", ls="--", lw=1.0,
+                             label=f"{label} (off-scale)")
+        ax[dim].set_ylabel(f"ZMP err {axis_name} [m]")
+        ax[dim].set_ylim(*ylim[dim])
+        ax[dim].set_xlim(*xlim)
+        ax[dim].grid(True, alpha=0.3)
+    ax[-1].set_xlabel("time [s]")
+
+
+def plot_zmp_error_run(run, ylim, xlim, note, ref_ylim=None):
+    fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    fig.suptitle(f"ZMP tracking errors - {run['label']}{note}")
+    for dim, axis_name in enumerate(AXES):
+        e = run["err"][:, dim]
+        ax[dim].axhline(0.0, color="grey", lw=0.8, alpha=0.6)
+        ax[dim].plot(run["t"], e, label=f"{axis_name} (RMS {rms(e) * 1000:.2f} mm)")
+    apply_zmp_limits(ax, ylim, xlim, ref_ylim)
+    for dim in range(len(AXES)):
+        ax[dim].legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def plot_zmp_error_overlay(runs, ylim, xlim, note, title, ref_ylim=None):
+    fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    fig.suptitle(f"{title}{note}")
+    for run in runs:
+        for dim in range(len(AXES)):
+            ax[dim].plot(run["t"], run["err"][:, dim], lw=0.9,
+                         label=f"{run['stem']}{run['tag']}")
+    apply_zmp_limits(ax, ylim, xlim, ref_ylim)
+    ax[0].legend(loc="upper right", fontsize=7)
+    # the run labels only need listing once, but each axis has its own reference
+    # bound, so give the lower panels a legend holding just that entry
+    for dim in range(1, len(AXES)):
+        handles, labels = ax[dim].get_legend_handles_labels()
+        ref = [(h, l) for h, l in zip(handles, labels) if l.startswith("MPC scale")]
+        if ref:
+            ax[dim].legend([h for h, _ in ref], [l for _, l in ref],
+                           loc="upper right", fontsize=7)
+    fig.tight_layout()
+    return fig
+
+
+def save_fig(fig, out_dir, name):
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, name)
+    fig.savefig(out_path, dpi=300)
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def report_limits(what, ylim):
+    dims = ", ".join(f"{AXES[d]} +/-{ylim[d][1] * 1000:.2f}" for d in range(len(AXES)))
+    print(f"{what} ZMP err limits [mm]: {dims}")
+
+
+def replot_zmp_errors(log_paths, warmup, percentile, split_mpc=False, overlay=True):
+    runs = collect_zmp_errors(log_paths, warmup)
+    xlim = common_zmp_xlim(runs)  # the time axis stays shared across every run
+    note = "" if percentile >= 100 else f"  [y-limits at p{percentile:g}, clipped]"
+
+    global_ylim = common_zmp_ylim(runs, percentile)
+    shared = [d for d, name in enumerate(AXES) if name in SHARED_ZMP_AXES]
+
+    # {is_mpc: (runs, ylim)}; one entry means a single scale over everything
+    groups = {}
+    if split_mpc and any(r["use_mpc"] for r in runs) and any(not r["use_mpc"] for r in runs):
+        for is_mpc in (True, False):
+            g = [r for r in runs if r["use_mpc"] is is_mpc]
+            ylim = common_zmp_ylim(g, percentile)
+            for d in shared:
+                ylim[d] = global_ylim[d]
+            groups[is_mpc] = (g, ylim)
+            report_limits("MPC" if is_mpc else "CP ctrl (no MPC)", ylim)
+        if shared:
+            names = "/".join(SHARED_ZMP_AXES)
+            print(f"  ({names} held on one scale across all runs)")
+    else:
+        groups[None] = (runs, global_ylim)
+        report_limits("Common", global_ylim)
+
+    # on the wider CP-controller plots, mark where the MPC scale would sit --
+    # except on the axes both families already share, where it is the same line
+    mpc_ylim = None
+    if True in groups:
+        mpc_ylim = [None if d in shared else b for d, b in enumerate(groups[True][1])]
+
+    for key, (group, ylim) in groups.items():
+        ref = mpc_ylim if key is False else None
+        for run in group:
+            save_fig(plot_zmp_error_run(run, ylim, xlim, note, ref),
+                     os.path.join("logs", run["stem"]), ZMP_ERR_NAME)
+        if overlay and len(group) > 1:
+            title = ("ZMP tracking error comparison (common scale)" if key is None
+                     else "ZMP tracking error comparison - "
+                          + ("MPC runs" if key else "CP-controller runs"))
+            name = ZMP_ERR_COMPARISON_NAME if key is None else ZMP_ERR_GROUP_NAMES[key]
+            save_fig(plot_zmp_error_overlay(group, ylim, xlim, note, title, ref),
+                     os.path.join("logs", "comparison"), name)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot simulation logs exported by Logger.save_npz.")
     parser.add_argument("logs", nargs="*", help="One or more .npz log files (default: latest in logs/).")
@@ -335,6 +527,34 @@ def main():
         "--compare",
         action="store_true",
         help="Compare tracking errors across multiple runs.",
+    )
+    parser.add_argument(
+        "--zmp-errors",
+        action="store_true",
+        help="Replot only the ZMP tracking error, with y-limits shared by every "
+             "given log (default: all of logs/*.npz) so the runs are comparable.",
+    )
+    parser.add_argument(
+        "--percentile",
+        type=float,
+        default=100.0,
+        help="With --zmp-errors, take the shared y-limit from this percentile of "
+             "|error| instead of the max, so one saturated run does not flatten "
+             "every other plot (default: 100 = max).",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=0,
+        help="With --zmp-errors, drop this many initial samples before "
+             "plotting and before computing the shared limits.",
+    )
+    parser.add_argument(
+        "--split-mpc",
+        action="store_true",
+        help="With --zmp-errors, scale the MPC and CP-controller runs separately "
+             "(they differ by ~70x, so one scale flattens the MPC ones) and mark "
+             "the MPC bounds on the CP-controller plots for reference.",
     )
     parser.add_argument(
         "--eta",
@@ -357,18 +577,28 @@ def main():
     args = parser.parse_args()
 
     if not args.logs:
-        candidates = sorted(Path("logs").glob("*.npz"), key=lambda p: p.stat().st_ctime)
-        if not candidates:
-            raise FileNotFoundError("No .npz files found in logs/")
-        args.logs = [str(candidates[-1])]
-        print(f"Auto-selected: {args.logs[0]}")
+        if args.zmp_errors:
+            # the shared scale is only meaningful over the whole set of runs
+            args.logs = sorted(str(p) for p in Path("logs").glob("*.npz"))
+            if not args.logs:
+                raise FileNotFoundError("No .npz files found in logs/")
+            print(f"Auto-selected {len(args.logs)} logs from logs/")
+        else:
+            candidates = sorted(Path("logs").glob("*.npz"), key=lambda p: p.stat().st_ctime)
+            if not candidates:
+                raise FileNotFoundError("No .npz files found in logs/")
+            args.logs = [str(candidates[-1])]
+            print(f"Auto-selected: {args.logs[0]}")
 
     if args.compare and len(args.logs) < 2:
         raise ValueError("--compare requires at least two log files.")
 
     eta = args.eta if args.eta is not None else np.sqrt(args.gravity / args.lip_height)
 
-    if args.compare:
+    if args.zmp_errors:
+        replot_zmp_errors(args.logs, args.warmup, args.percentile,
+                          split_mpc=args.split_mpc)
+    elif args.compare:
         out_dir = os.path.join("logs", "comparison")
         os.makedirs(out_dir, exist_ok=True)
         for fig, name in plot_comparison(args.logs, eta):

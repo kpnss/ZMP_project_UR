@@ -2,7 +2,8 @@
 ablations).
 
 - Config comparison: reruns headless configs (kf on) that isolate the
-  mpc/no-mpc, cp/no-cp, lag/no-lag and open-loop axes.
+  mpc/no-mpc, cp/no-cp, lag/no-lag and open-loop axes. Each run is also saved
+  to `logs/<stem>.npz` (same naming as simulation.py) for replotting.
 - Ablations: recomputes metrics from each study's cached `raw_runs.pkl`
   (raw error series -> no re-simulation needed).
 
@@ -13,38 +14,59 @@ its peak (max Fz). Positions in mm, waist attitude in deg, force in N.
 
 Usage:  python make_runs_summary.py
 """
+import os
 import pickle
 import numpy as np
 
 from ablation_poles import (build_world, suppress_c_output, metrics_of,
                             WARMUP_STEPS)
 from simulation import Hrp4Controller
+from plot_logs import kf_suffix, mpc_suffix, cp_suffix, variant_label
 
 OUT_MD = "runs_summary.md"
+# each config run is also dumped here as `<stem>.npz`, using the same file
+# naming as an interactive `simulation.py` run, so plot_logs.py can pick them up
+LOG_DIR = "logs"
 
 
 # ---- config comparison (fresh headless runs) -------------------------------
 
 # Each config is defined by the named feature toggles (mpc = use_mpc,
 # cp fb = use_cp, zmp fb = use_zmp_fb, lag sys = use_lag,
-# openloop ref = open_loop) plus an explicit display label. Run args and
-# displayed flags are derived from these -- no hardcoded booleans to drift.
+# openloop ref = open_loop). Run args, displayed flags, the log stem and the
+# display label are all derived from these -- no hardcoded booleans to drift.
+# Labels live in plot_logs.VARIANT_LABELS so the plots use the same names.
 FLAG_NAMES = ["mpc", "cp fb", "zmp fb", "lag sys", "openloop ref"]
 
 CONFIGS = [
-    {"label": "ISMPC (no cp)",            "mpc": True,  "cp fb": False, "zmp fb": False,  "lag sys": False, "openloop ref": False},
-    {"label": "plain",                    "mpc": True,  "cp fb": True,  "zmp fb": True,  "lag sys": False, "openloop ref": False},
-    {"label": "no zmp fb",                "mpc": True,  "cp fb": True,  "zmp fb": False, "lag sys": False, "openloop ref": False},
-    {"label": "lag",                      "mpc": True,  "cp fb": True,  "zmp fb": True,  "lag sys": True,  "openloop ref": False},
-    {"label": "openloop",                 "mpc": True,  "cp fb": True,  "zmp fb": True,  "lag sys": False, "openloop ref": True},
-    {"label": "CP controller",            "mpc": False, "cp fb": True,  "zmp fb": True,  "lag sys": False, "openloop ref": False},
-    {"label": "CP controller, no zmp fb", "mpc": False, "cp fb": True,  "zmp fb": False, "lag sys": False, "openloop ref": False},
-    {"label": "CP controller, lag",       "mpc": False, "cp fb": True,  "zmp fb": True,  "lag sys": True,  "openloop ref": False},
+    {"mpc": True,  "cp fb": False, "zmp fb": False,  "lag sys": False, "openloop ref": False},
+    {"mpc": True,  "cp fb": True,  "zmp fb": True,  "lag sys": False, "openloop ref": False},
+    {"mpc": True,  "cp fb": True,  "zmp fb": False, "lag sys": False, "openloop ref": False},
+    {"mpc": True,  "cp fb": True,  "zmp fb": True,  "lag sys": True,  "openloop ref": False},
+    {"mpc": True,  "cp fb": True,  "zmp fb": True,  "lag sys": False, "openloop ref": True},
+    {"mpc": False, "cp fb": True,  "zmp fb": True,  "lag sys": False, "openloop ref": False},
+    {"mpc": False, "cp fb": True,  "zmp fb": False, "lag sys": False, "openloop ref": False},
+    {"mpc": False, "cp fb": True,  "zmp fb": True,  "lag sys": True,  "openloop ref": False},
 ]
 
 
 def config_label(cfg):
-    return cfg["label"]
+    return variant_label(config_stem(cfg))
+
+
+def config_stem(cfg):
+    """Log stem for a config, matching the suffix simulation.py builds."""
+    stem = ("log" + kf_suffix(True) + mpc_suffix(cfg["mpc"])
+            + cp_suffix(cfg["cp fb"]))
+    # the k_2*(p-p_ref) term lives inside the CP feedback law, so with cp fb off
+    # the zmp fb flag is a no-op and does not earn a suffix
+    if cfg["cp fb"] and not cfg["zmp fb"]:
+        stem += "_nozmpfb"
+    if cfg["openloop ref"]:
+        stem += "_openloop"
+    if cfg["lag sys"]:
+        stem += "_lag"
+    return stem
 
 
 def display_flags(cfg):
@@ -54,7 +76,7 @@ def display_flags(cfg):
     return d
 
 
-def run_config(use_mpc, use_cp, use_zmp_fb, use_lag, open_loop):
+def run_config(use_mpc, use_cp, use_zmp_fb, use_lag, open_loop, log_stem=None):
     world, hrp4 = build_world()
     node = Hrp4Controller(world, hrp4, log_path=None, autosave_every=0,
                           use_kf=True, use_mpc=use_mpc, use_cp=use_cp,
@@ -73,6 +95,20 @@ def run_config(use_mpc, use_cp, use_zmp_fb, use_lag, open_loop):
                 break
 
     log = node.logger.log
+
+    # dump the raw series so plot_logs.py can replot these exact runs
+    if log_stem is not None:
+        log_path = os.path.join(LOG_DIR, f"{log_stem}.npz")
+        node.logger.save_npz(
+            log_path,
+            time_step=node.params['world_time_step'],
+            use_kf=node.use_kf,
+            use_mpc=node.use_mpc,
+            open_loop=node.open_loop,
+            use_cp=node.use_cp,
+            steps=node.time,
+        )
+        print(f"  saved {log_path}", flush=True)
 
     def arr(batch, item, level):
         return np.array(log[batch, item, level])
@@ -158,16 +194,28 @@ def ablation_subtable(param_label, xs, metrics):
 
 
 def config_section():
+    # poles/design params actually used by the config runs (read from a throwaway node)
+    _w, _hrp4 = build_world()
+    _pp = Hrp4Controller(_w, _hrp4, log_path=None, autosave_every=0, use_kf=True,
+                         use_mpc=True, use_cp=True, open_loop=False, use_lag=False,
+                         use_zmp_fb=True).params
+    import matplotlib.pyplot as _plt; _plt.close('all')
+    poles_line = (f"Poles used for this table: `alpha = {_pp['alpha']:g}`, "
+                  f"`beta = {_pp['beta']:g}`, `gamma = {_pp['gamma']:g}`; "
+                  f"ZMP-lag gain `g_p = {_pp['g_p']:g}`; `eta = {_pp['eta']:.3f}`.")
+
     rows = []
     for cfg in CONFIGS:
         label = config_label(cfg)
         print(f"Running config: {label} ...", flush=True)
         m = run_config(cfg["mpc"], cfg["cp fb"], cfg["zmp fb"], cfg["lag sys"],
-                       cfg["openloop ref"])
+                       cfg["openloop ref"], log_stem=config_stem(cfg))
         rows.append((label, display_flags(cfg), m))
 
     out = [
         "## Configuration comparison (kf on)",
+        "",
+        poles_line,
         "",
         "Fresh headless runs on the current code/params. Each variant flips one "
         "feature off the **plain** baseline (ISMPC + capture-point + ZMP feedback).",
