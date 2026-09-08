@@ -15,6 +15,15 @@ The extension available in this repository uses the 3D LIP and can also generate
 To this framework, a novel balancing technique based on Capture Points was added. The newest control is comprised of both the MPC previously defined and the new control. Main reference:<br />
 [Mitsuharu Morisawa, Shuuji Kajita, Fumio Kanehiro, Kenji Kaneko, Kanako Miura, Kazuhiro Yokoi, "Balance Control based on Capture Point Error Compensation for Biped Walking on Uneven Terrain"](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=6651601)<br />
 
+# Demo
+The **plain** configuration (IS-MPC + capture-point feedback + ZMP feedback) walking ~2.2 m:
+
+![plain configuration walking](logs/videos/plain.gif)
+
+Full-resolution recordings live in `logs/videos/` (1280x720, 25 fps, 1x real time):
+`plain.mp4`, `ISMPC-no-cp.mp4` and `CP-controller.mp4`. See
+[Simulation videos](#simulation-videos) to regenerate them.
+
 # Setup
 You need a Python installation and some dependencis. If using pip, you can run the following
 ```
@@ -78,6 +87,23 @@ Each row of the configuration table is one flag combination of `simulation.py`. 
 | CP controller, ZMP-lag plant | `python simulation.py --no-mpc --lag` |
 
 Append `--no-kf` to any of these to disable the Kalman filter. Each run writes `logs/log<suffix>.npz` and, unless `--no-plot` is given, saves the per-run plots into `logs/log<suffix>/`.
+
+## Simulation videos
+`record_videos.py` records an MP4 per configuration into `logs/videos/`, named with the
+same slugs as `logs/zmp_plots/`:
+```
+python record_videos.py                        # ISMPC (no cp), plain, CP controller
+python record_videos.py plain CP-controller    # a chosen subset
+python record_videos.py --benchmark            # check the renderer sustains the target fps
+```
+It needs `ffmpeg` and `Xvfb` (`sudo dnf install -y xorg-x11-server-Xvfb`). dartpy's own
+`Viewer.record()` cannot be used: the wheel bundles the OSG core libraries but none of the
+`osgdb_*` image plugins, so OSG has no encoder to write frames with. Instead each run is
+rendered onto a private Xvfb display and captured with ffmpeg's `x11grab`, so nothing
+appears on -- or is recorded from -- the real desktop. Stepping is driven manually rather
+than through `viewer.run()`, so a run ends with the footstep plan instead of waiting for a
+window to be closed, and it is paced to wall-clock time (`stride * fps * dt == 1`) so the
+video plays at 1x.
 
 # Block Diagram
 The complete block diagram is shown below. Some modifications that were tested were to delete feedback to MPC and passage through Kalman Filter, but this is the most complete diagram.
